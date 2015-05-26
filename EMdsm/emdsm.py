@@ -35,8 +35,10 @@ class adam(object):
           self.beta2=beta2
           self.epsilon=epsilon
           self.lambd=lambd
+          self.set_up = False
 
       def set_updates(self, params, cost):
+          self.set_up = True
           self.auxs = []
           for i in xrange(len(params)):
               self.auxs.append(self.intialize_aux(params[i].get_value().shape))
@@ -49,6 +51,8 @@ class adam(object):
                   self.updates.append((aux[i_],new_aux[i_]))
 
       def updates():
+          if not self.set_up:
+              raise ValueError("call set_updates before doing updates!")
           return self.updates
  
       def update(self,theta,gradient,aux):
@@ -99,7 +103,7 @@ class LatentEnergyFn(object):
 
 
 class GaussianEnergy(LatentEnergyFn):
-      def __init__(self,nh,nx,sigma=0.01,inithsigma=0.1,initxsigma=0.1,initwsigma=0.1):
+      def __init__(self,nx,nh,sigma=0.01,inithsigma=0.1,initxsigma=0.1,initwsigma=0.1):
           super().__init__(sigma,nx,nh)
           self.hprec_pre=sharedX(np.random.normal(0,inithsigma,nh))
           self.hprec=softplus(self.hprec_pre)
@@ -124,42 +128,88 @@ class EMinferencer(object):
 
 
 class LangevinEMinferencer(EMinferencer):
-      def __init__(self,energyfn, x, h, batchsize, epsilon=0.1,n_initial_it=3,n_update_it=1):
+      def __init__(self, energyfn, epsilon=0.1,n_initial_it=3, n_update_it=1):
           self.super(energyfn)
           self.n_initial_it=n_initial_it
           self.n_update_it=n_update_it
           self.new_h = self.energyfn.h - epsilon*self.dEdh + gaussian(0.*self.h,1)*energyfn.sigma
+          self.set_infer = False
 
+      def set_inference(self, x, h, batchsize):
+          self.set_infer = True
           self.index = T.iscalar()
           self.update_h = theano.function(
               [self.index], [self.new_h],
               updates = {(h, self.new_h)},
               givens = {self.energyfn.x : x[self.index*batchsize, (self.index+1)*batchsize], self.energyfn.h : h]})
            
-      def initial_inference(self, ind):
-          for n_init in xrange(n_initial_it):
+      def inference_h(self, ind):
+          if not self.set_infer:
+             raise ValueError("Call set_inference before doing inference!")
+          for n_init in xrange(self.n_initial_it):
               self.update_h(ind)
+
+      def reset_h(self, h, h_new):
+          if h.get_value().shape != h_new.shape:
+             raise ValueError("Shape mismathc for reset h!")
+          h.set_value(h_new)
 
 
 class EMdsm(object):
-      def __init__(self, energyfn, optimizer, inferencer, minibatchsize,n_inference_update_steps=1):
-          self.energyfn = energyfn
-          # do we need determinant in cost?
-          self.cost = T.mean(energyfn) + T.mean()
-          self.optimizer=optimizer
-          self.inferencer=inferencer
-          self.n_inference_update_steps=n_inference_update_steps
+      def __init__(self, x, minibatchsize, energyfn, optimizer, inferencer):
+          self.x = x
+          self.batchsize = minibatchsize
+          self.n_batch = x.get_value().shape[0]/self.batchsize 
           self.h = sharedX(np.zeros((minibatch_size,self.energyfn.nh)))
+          self.energyfn = energyfn
+
+          # set cost
+          # TODO: do we need determinant in cost?
+          self.cost = T.mean((self.energyfn.Rh_n - self.energyfn.h)**2)
+                      + T.mean((self.energyfn.Rx_n - self.energyfn.x)**2)
+
+          self.optimizer = optimizer
+          self.optimizer.set_updates(self.energyfn.params, self.cost)
+
+          self.inferencer = inferencer
+          self.inferencer.set_inference(self.x, self.h, minibatchsize) 
+
+          self.index = T.iscalar()
+          self.update_p = theano.function(
+               [self.index], [self.cost],
+               updates = self.optimizer.updates(),
+               givens = {self.energyfn.x : x[self.index*batchsize, (self.index+1)*batchsize], self.energyfn.h : h]})
+
+      def update_params(self, ind, n_update):
+          for t in xrange(n_update):
+              self.update_p(ind)
 
       def minibatch_update(self,minibatch_x):
           self.inferencer.initial_inference(minibatch_x,self.h)  
           for t in range(self.n_inference_update_steps):
               self.inferencer.inference_and_update(minibatch_x,self.h)
       
-      def mainloop():
+      def mainloop(max_epoch = 100):
+
+          
                     
+def exp():
+    # TOY GAUSSIAN DATA 2D
+    toy_num = 10000
+    toy_mean = [0, 0]
+    toy_nstd = [[3, 1.5],[1.5, 1]]
+    #toy_nstd = [[2]]
+    train_x = sharedX(np.random.multivariate_normal(toy_mean, toy_nstd, toy_num))
 
+    max_epoch = 200
+    batchsize = 50
+    n_batch = train_x.get_value().shape[0]/batchsize
+    nx, nh = 2, 1
+    train_h = sharedX(np.zeros((minibatch_size, nh)))
 
+    energyfn = GaussianEnergy(nx, nh) 
+    opt = adam()
+    
 def exp(max_ep = 200, batsize = 10, opt=adam()):
     batch_size = batsize 
     n_batches = toy_num / batch_size 
