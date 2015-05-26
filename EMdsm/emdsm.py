@@ -151,16 +151,29 @@ class LangevinEMinferencer(EMinferencer):
 
       def reset_h(self, h, h_new):
           if h.get_value().shape != h_new.shape:
-             raise ValueError("Shape mismathc for reset h!")
+             raise ValueError("Shape mismatch when reseting h!")
           h.set_value(h_new)
 
 
-class EMdsm(object):
-      def __init__(self, x, minibatchsize, energyfn, optimizer, inferencer):
+class EMmodels(object):
+      def __init__(self):
+          pass
+
+      def mainloop(self):
+          pass
+
+      def monitors(self):
+          pass 
+
+
+class EMdsm(EMmodels):
+      def __init__(self, x, minibatchsize, energyfn, optimizer, inferencer, n_params_update):
+          self.super()
           self.x = x
           self.batchsize = minibatchsize
+          self.n_params_update = n_params_update
           self.n_batch = x.get_value().shape[0]/self.batchsize 
-          self.h = sharedX(np.zeros((minibatch_size,self.energyfn.nh)))
+          self.h = sharedX(np.zeros((self.batchsize, self.energyfn.nh)))
           self.energyfn = energyfn
 
           # set cost
@@ -168,31 +181,34 @@ class EMdsm(object):
           self.cost = T.mean((self.energyfn.Rh_n - self.energyfn.h)**2)
                       + T.mean((self.energyfn.Rx_n - self.energyfn.x)**2)
 
+          # set optimizer
           self.optimizer = optimizer
           self.optimizer.set_updates(self.energyfn.params, self.cost)
 
+          # set inferencer
           self.inferencer = inferencer
           self.inferencer.set_inference(self.x, self.h, minibatchsize) 
 
+          # define parameter update function
           self.index = T.iscalar()
           self.update_p = theano.function(
                [self.index], [self.cost],
                updates = self.optimizer.updates(),
                givens = {self.energyfn.x : x[self.index*batchsize, (self.index+1)*batchsize], self.energyfn.h : h]})
 
-      def update_params(self, ind, n_update):
-          for t in xrange(n_update):
+      def update_params(self, ind):
+          for t in xrange(self.n_params_update):
               self.update_p(ind)
 
-      def minibatch_update(self,minibatch_x):
-          self.inferencer.initial_inference(minibatch_x,self.h)  
-          for t in range(self.n_inference_update_steps):
-              self.inferencer.inference_and_update(minibatch_x,self.h)
-      
-      def mainloop(max_epoch = 100):
+      def main_loop(max_epoch = 100):
+          for e in xrange(max_epoch):
+              for k in xrange(self.n_batch):
+                   self.inferencer.reset_h(self.h, np.zeros((self.batchsize, self.energyfn.nh)))
+                   self.inferencer.inference_h(k)
+                   self.update_params(k)
 
-          
-                    
+
+      
 def exp():
     # TOY GAUSSIAN DATA 2D
     toy_num = 10000
