@@ -28,14 +28,29 @@ toy_nstd = [[3, 1.5],[1.5, 1]]
 train_x = sharedX(np.random.multivariate_normal(toy_mean, toy_nstd, toy_num))
 dlog2pi = 2*np.log(2*np.pi)
 
-class adam:
-      def __init__(self,alpha=0.001,beta1=0.9,beta2=.999,epsilon=1e-8,lambd=(1-1e-8)):
+class adam(object):
+      def __init__(self, alpha=0.001,beta1=0.9,beta2=.999,epsilon=1e-8,lambd=(1-1e-8)):
           self.alpha=alpha
           self.beta1=beta1
           self.beta2=beta2
           self.epsilon=epsilon
           self.lambd=lambd
 
+      def set_updates(self, params, cost):
+          self.auxs = []
+          for i in xrange(len(params)):
+              self.auxs.append(self.intialize_aux(params[i].get_value().shape))
+          self.updates = []
+          for (param, aux) in zip(params, self.auxs):
+              [new_param, new_aux] = self.update(param, T.grad(cost, param), aux) 
+              self.updates.append((param, new_param))
+              for i_ in range(len(aux)):
+                  assert aux[i_].ndim == new_aux[i_].ndim
+                  self.updates.append((aux[i_],new_aux[i_]))
+
+      def updates():
+          return self.updates
+ 
       def update(self,theta,gradient,aux):
           (m,v,t)=aux
           new_t = t+1.
@@ -52,21 +67,28 @@ class adam:
           t = sharedX(np.zeros(()))
           return (m,v,t)
 
-class LatentEnergyFn:
+
+class LatentEnergyFn(object):
       def __init__(self,sigma=0.01,nx=2,nh=1):
           self.sigma=sigma
           self.nx=nx
           self.nh=nh
-          self.s=T.matrix() # minibatch: n_examples x state_dim
-          self.x=self.s[:,0:nx]
-          self.h=self.s[:,nx:(nx+nh)]
+          #self.s=T.matrix() # minibatch: n_examples x state_dim
+          #self.x=self.s[:,0:nx]
+          #self.h=self.s[:,nx:(nx+nh)]
+          self.x = T.matrix()
+          self.h = T.matrix()
+
           # subclasss must define 
           #  self.E as a function mapping Theano variable for the state to a Theano variable for the energy
           #  self.param as a Theano shared variable for the parameters
 
       def set_R(self):
-          self.dEds = T.grad(self.E,self.s)
-          self.R = self.s-self.sigma*self.dEds
+          self.dEdh = T.grad(self.E,self.h)
+          self.dEdx = T.grad(self.E,self.x)
+          self.Rh = self.h-self.sigma*self.dEdh
+          self.Rx = self.x-self.sigma*self.dEdx
+
 
 class GaussianEnergy(LatentEnergyFn):
       def __init__(self,nh,nx,sigma=0.01,inithsigma=0.1,initxsigma=0.1,initwsigma=0.1):
@@ -81,23 +103,35 @@ class GaussianEnergy(LatentEnergyFn):
                   -T.sum(self.h*T.dot(self.x,self.w),axis=1)).mean()
           self.set_R()
 
-class EMinferencer:
+
+class EMinferencer(object):
       def __init__(self,energyfn):
           self.energyfn=energyfn
 
+
 class LangevinEMinferencer(EMinferencer):
-      def __init__(self,energyfn,epsilon=0.1,n_initial_it=3,n_update_it=1):
+      def __init__(self,energyfn, x, h, batchsize, epsilon=0.1,n_initial_it=3,n_update_it=1):
           self.super(energyfn)
           self.n_initial_it=n_initial_it
           self.n_update_it=n_update_it
-          self.new_h = self.energyfn.h - epsilon*self.dEds + gaussian(0.*self.h,1)*energyfn.sigma
-          self.update_h = theano.function([],[self.new_h],g
+          self.new_h = self.energyfn.h - epsilon*self.dEdh + gaussian(0.*self.h,1)*energyfn.sigma
 
-      def initial_inference(self,x,h)
+          self.index = T.iscalar()
+          self.update_h = theano.function(
+              [self.index], [self.new_h],
+              updates = {(h, self.new_h)},
+              givens = {self.energyfn.x : x[self.index*batchsize, (self.index+1)*batchsize], self.energyfn.h : h]})
+           
+      def initial_inference(self, ind):
+          for n_init in xrange(n_initial_it):
+              self.update_h(ind)
 
-class EMdsm:
-      def __init__(self,energyfn,optimizer,inferencer,,minibatchsize,n_inference_update_steps=1):
-          self.energyfn=energyfn
+
+class EMdsm(object):
+      def __init__(self, energyfn, optimizer, inferencer, minibatchsize,n_inference_update_steps=1):
+          self.energyfn = energyfn
+          # do we need determinant in cost?
+          self.cost = T.mean() + T.mean()
           self.optimizer=optimizer
           self.inferencer=inferencer
           self.n_inference_update_steps=n_inference_update_steps
@@ -108,8 +142,8 @@ class EMdsm:
           for t in range(self.n_inference_update_steps):
               self.inferencer.inference_and_update(minibatch_x,self.h)
       
-
-          
+      def mainloop():
+                    
 
 
 def exp(max_ep = 200, batsize = 10, opt=adam()):
