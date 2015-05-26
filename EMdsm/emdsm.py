@@ -86,8 +86,16 @@ class LatentEnergyFn(object):
       def set_R(self):
           self.dEdh = T.grad(self.E,self.h)
           self.dEdx = T.grad(self.E,self.x)
-          self.Rh = self.h-self.sigma*self.dEdh
-          self.Rx = self.x-self.sigma*self.dEdx
+          self.Rh = self.h - self.sigma**2 * self.dEdh
+          self.Rx = self.x - self.sigma**2 * self.dEdx
+
+      def set_R_noise(self, noise_std):
+          self.x_n = self.x + gaussian(0.*self.x, 1)*noise_std
+          self.h_n = self.h + gaussian(0.*self.x, 1)*noise_std
+          self.dEdh_n = T.grad(self.E_n, self.h_n)
+          self.dEdx_n = T.grad(self.E_n, self.x_n)
+          self.Rh_n = self.h_n - self.sigma**2 * self.dEdh_n
+          self.Rx_n = self.x_n - self.sigma**2 * self.dEdx_n
 
 
 class GaussianEnergy(LatentEnergyFn):
@@ -99,9 +107,15 @@ class GaussianEnergy(LatentEnergyFn):
           self.xprec=softplus(self.hprec_pre)
           self.w=sharedX(np.random.normal(0,initwsigma,(nx,nh)))
           self.params=[self.w,self.xprec_pre,self.hprec_pre]
-          self.E= (T.dot(self.x*self.x,self.xprec)+T.dot(self.h*self.h,self.hprec)
+
+          self.E = (T.dot(self.x*self.x,self.xprec)+T.dot(self.h*self.h,self.hprec)
                   -T.sum(self.h*T.dot(self.x,self.w),axis=1)).mean()
+
+          self.E_n = (T.dot(self.x_n*self.x_n,self.xprec)+T.dot(self.h_n*self.h_n,self.hprec)
+                   -T.sum(self.h_n*T.dot(self.x_n,self.w),axis=1)).mean()
+
           self.set_R()
+          self.set_R_noise(self.sigma)
 
 
 class EMinferencer(object):
@@ -131,7 +145,7 @@ class EMdsm(object):
       def __init__(self, energyfn, optimizer, inferencer, minibatchsize,n_inference_update_steps=1):
           self.energyfn = energyfn
           # do we need determinant in cost?
-          self.cost = T.mean() + T.mean()
+          self.cost = T.mean(energyfn) + T.mean()
           self.optimizer=optimizer
           self.inferencer=inferencer
           self.n_inference_update_steps=n_inference_update_steps
