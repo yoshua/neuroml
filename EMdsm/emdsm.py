@@ -41,7 +41,7 @@ class adam(object):
           self.set_up = True
           self.auxs = []
           for i in xrange(len(params)):
-              self.auxs.append(self.intialize_aux(params[i].get_value().shape))
+              self.auxs.append(self.initialize_aux(params[i].get_value().shape))
           self.updates = []
           for (param, aux) in zip(params, self.auxs):
               [new_param, new_aux] = self.update(param, T.grad(cost, param), aux) 
@@ -82,6 +82,8 @@ class LatentEnergyFn(object):
           #self.h=self.s[:,nx:(nx+nh)]
           self.x = T.matrix()
           self.h = T.matrix()
+          self.x_n = self.x + gaussian(0.*self.x, 1)*self.sigma
+          self.h_n = self.h + gaussian(0.*self.x, 1)*self.sigma
 
           # subclasss must define 
           #  self.E as a function mapping Theano variable for the state to a Theano variable for the energy
@@ -93,9 +95,7 @@ class LatentEnergyFn(object):
           self.Rh = self.h - self.sigma**2 * self.dEdh
           self.Rx = self.x - self.sigma**2 * self.dEdx
 
-      def set_R_noise(self, noise_std):
-          self.x_n = self.x + gaussian(0.*self.x, 1)*noise_std
-          self.h_n = self.h + gaussian(0.*self.x, 1)*noise_std
+      def set_R_noise(self):
           self.dEdh_n = T.grad(self.E_n, self.h_n)
           self.dEdx_n = T.grad(self.E_n, self.x_n)
           self.Rh_n = self.h_n - self.sigma**2 * self.dEdh_n
@@ -104,7 +104,7 @@ class LatentEnergyFn(object):
 
 class GaussianEnergy(LatentEnergyFn):
       def __init__(self,nx,nh,sigma=0.01,inithsigma=0.1,initxsigma=0.1,initwsigma=0.1):
-          super().__init__(sigma,nx,nh)
+          super(GaussianEnergy, self).__init__(sigma,nx,nh)
           self.hprec_pre=sharedX(np.random.normal(0,inithsigma,nh))
           self.hprec=softplus(self.hprec_pre)
           self.xprec_pre=sharedX(np.random.normal(0,inithsigma,nx))
@@ -119,7 +119,12 @@ class GaussianEnergy(LatentEnergyFn):
                    -T.sum(self.h_n*T.dot(self.x_n,self.w),axis=1)).mean()
 
           self.set_R()
-          self.set_R_noise(self.sigma)
+          self.set_R_noise()
+
+          self.monitor = theano.function([], [self.hprec, self.xprec, self.w])
+
+      def params_monitor(self):
+          return self.monitor()
 
 
 class EMinferencer(object):
@@ -128,11 +133,10 @@ class EMinferencer(object):
 
 
 class LangevinEMinferencer(EMinferencer):
-      def __init__(self, energyfn, epsilon=0.1,n_initial_it=3, n_update_it=1):
-          self.super(energyfn)
-          self.n_initial_it=n_initial_it
-          self.n_update_it=n_update_it
-          self.new_h = self.energyfn.h - epsilon*self.dEdh + gaussian(0.*self.h,1)*energyfn.sigma
+      def __init__(self, energyfn, epsilon=0.1, n_inference_it=3):
+          super(LangevinEMinferencer, self).__init__(energyfn)
+          self.n_inference_it=n_inference_it
+          self.new_h = self.energyfn.h - epsilon*self.energyfn.dEdh + gaussian(0.*self.energyfn.h,1)*energyfn.sigma
           self.set_infer = False
 
       def set_inference(self, x, h, batchsize):
@@ -141,12 +145,12 @@ class LangevinEMinferencer(EMinferencer):
           self.update_h = theano.function(
               [self.index], [self.new_h],
               updates = {(h, self.new_h)},
-              givens = {self.energyfn.x : x[self.index*batchsize, (self.index+1)*batchsize], self.energyfn.h : h]})
+              givens = {self.energyfn.x : x[self.index*batchsize, (self.index+1)*batchsize], self.energyfn.h : h})
            
       def inference_h(self, ind):
           if not self.set_infer:
              raise ValueError("Call set_inference before doing inference!")
-          for n_init in xrange(self.n_initial_it):
+          for n_init in xrange(self.n_inference_it):
               self.update_h(ind)
 
       def reset_h(self, h, h_new):
@@ -162,23 +166,23 @@ class EMmodels(object):
       def mainloop(self):
           pass
 
-      def monitors(self):
+      def set_monitor(self):
           pass 
 
 
 class EMdsm(EMmodels):
-      def __init__(self, x, minibatchsize, energyfn, optimizer, inferencer, n_params_update):
-          self.super()
+      def __init__(self, x, minibatchsize, energyfn, optimizer, inferencer, n_params_update_it = 1):
+          super(EMdsm, self).__init__()
           self.x = x
           self.batchsize = minibatchsize
-          self.n_params_update = n_params_update
+          self.n_params_update_it = n_params_update_it
           self.n_batch = x.get_value().shape[0]/self.batchsize 
-          self.h = sharedX(np.zeros((self.batchsize, self.energyfn.nh)))
           self.energyfn = energyfn
+          self.h = sharedX(np.zeros((self.batchsize, self.energyfn.nh)))
 
           # set cost
           # TODO: do we need determinant in cost?
-          self.cost = T.mean((self.energyfn.Rh_n - self.energyfn.h)**2)
+          self.cost = T.mean((self.energyfn.Rh_n - self.energyfn.h)**2) \
                       + T.mean((self.energyfn.Rx_n - self.energyfn.x)**2)
 
           # set optimizer
@@ -194,24 +198,53 @@ class EMdsm(EMmodels):
           self.update_p = theano.function(
                [self.index], [self.cost],
                updates = self.optimizer.updates(),
-               givens = {self.energyfn.x : x[self.index*batchsize, (self.index+1)*batchsize], self.energyfn.h : h]})
+               givens = {self.energyfn.x : x[self.index*batchsize, (self.index+1)*batchsize], self.energyfn.h : h})
+
 
       def update_params(self, ind):
-          for t in xrange(self.n_params_update):
+          for t in xrange(self.n_params_update_it):
               self.update_p(ind)
 
-      def main_loop(max_epoch = 100):
+      def main_loop(self, max_epoch = 100):
           for e in xrange(max_epoch):
               for k in xrange(self.n_batch):
                    self.inferencer.reset_h(self.h, np.zeros((self.batchsize, self.energyfn.nh)))
                    self.inferencer.inference_h(k)
                    self.update_params(k)
+              if e % 100 == 0:
+                  self.print_monitor()
+           
+      def monitor(self):
+          [w_h, w_x, w] = self.energyfn.params_monitor()
+          nx = self.energyfn.nx
+          nh = self.energyfn.nh
+
+          precision = np.zeros((nx+nh, nx+nh))
+          precision[:nx, :nx] = np.eye(nx)*w_x
+          precision[nx:nx+nh, nx:nx+nh] = np.eye(nh)*w_h
+          precision[:nx, nx:nx+nh] = w_x/2
+          precision[nx:nx+nh, :nx] = w_x.T/2
+          
+          precision = precision*2
+          cov = np.linalg.inv(self.precision) 
+          params = [w_h, w_x, w]
+
+          return self.percision, self.cov, self.params
+
+      def print_monitor(self):
+          [precision, cov, params] = self.monitor()
+          print "model precision = "
+          print precision
+          print "model cov = "
+          print cov
+          print "model params = "
+          print params
 
 
-      
 def exp():
+    # information about x
     # TOY GAUSSIAN DATA 2D
-    toy_num = 10000
+    toy_num = 100
     toy_mean = [0, 0]
     toy_nstd = [[3, 1.5],[1.5, 1]]
     #toy_nstd = [[2]]
@@ -219,14 +252,15 @@ def exp():
 
     max_epoch = 200
     batchsize = 50
-    n_batch = train_x.get_value().shape[0]/batchsize
     nx, nh = 2, 1
-    train_h = sharedX(np.zeros((minibatch_size, nh)))
 
-    energyfn = GaussianEnergy(nx, nh) 
+    energyfn = GaussianEnergy(nx, nh, sigma=0.01)
     opt = adam()
+    inferencer = LangevinEMinferencer(energyfn, epsilon=0.1, n_inference_it=3)
+    model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
+    model.mainloop(max_epoch)
     
-def exp(max_ep = 200, batsize = 10, opt=adam()):
+def exp_old(max_ep = 200, batsize = 10, opt=adam()):
     batch_size = batsize 
     n_batches = toy_num / batch_size 
     max_epochs = max_ep
@@ -370,5 +404,5 @@ def exp(max_ep = 200, batsize = 10, opt=adam()):
               #print np.linalg.det(np.linalg.inv(np.array([[w_x_[0], 0, 0.5*w_[0]],[0, w_x_[1], 0.5*w_[1]],[0.5*w_[0], 0.5*w_[1], w_h_]])*2)[:0:2][0:2]) #(w_x_[0][1]+w_x_[1][0])/2
 
 if __name__ == "__main__":
-    exp(100000, 256)
+    exp()
 
