@@ -50,7 +50,7 @@ class adam(object):
                   assert aux[i_].ndim == new_aux[i_].ndim
                   self.updates.append((aux[i_],new_aux[i_]))
 
-      def updates():
+      def get_updates(self):
           if not self.set_up:
               raise ValueError("call set_updates before doing updates!")
           return self.updates
@@ -108,7 +108,7 @@ class GaussianEnergy(LatentEnergyFn):
           self.hprec_pre=sharedX(np.random.normal(0,inithsigma,nh))
           self.hprec=softplus(self.hprec_pre)
           self.xprec_pre=sharedX(np.random.normal(0,inithsigma,nx))
-          self.xprec=softplus(self.hprec_pre)
+          self.xprec=softplus(self.xprec_pre)
           self.w=sharedX(np.random.normal(0,initwsigma,(nx,nh)))
           self.params=[self.w,self.xprec_pre,self.hprec_pre]
 
@@ -145,8 +145,8 @@ class LangevinEMinferencer(EMinferencer):
           self.update_h = theano.function(
               [self.index], [self.new_h],
               updates = {(h, self.new_h)},
-              givens = {self.energyfn.x : x[self.index*batchsize, (self.index+1)*batchsize], self.energyfn.h : h})
-           
+              givens = {self.energyfn.x : x[self.index*batchsize : (self.index+1)*batchsize], self.energyfn.h : h})
+
       def inference_h(self, ind):
           if not self.set_infer:
              raise ValueError("Call set_inference before doing inference!")
@@ -197,15 +197,15 @@ class EMdsm(EMmodels):
           self.index = T.iscalar()
           self.update_p = theano.function(
                [self.index], [self.cost],
-               updates = self.optimizer.updates(),
-               givens = {self.energyfn.x : x[self.index*batchsize, (self.index+1)*batchsize], self.energyfn.h : h})
+               updates = self.optimizer.get_updates(),
+               givens = {self.energyfn.x : x[self.index*self.batchsize : (self.index+1)*self.batchsize], self.energyfn.h : self.h})
 
 
       def update_params(self, ind):
           for t in xrange(self.n_params_update_it):
               self.update_p(ind)
 
-      def main_loop(self, max_epoch = 100):
+      def mainloop(self, max_epoch = 100):
           for e in xrange(max_epoch):
               for k in xrange(self.n_batch):
                    self.inferencer.reset_h(self.h, np.zeros((self.batchsize, self.energyfn.nh)))
