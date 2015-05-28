@@ -97,11 +97,11 @@ class GaussianEnergy(LatentEnergyFn):
           self.w=sharedX(np.random.normal(0,initwsigma,(nx,nh)))
           self.params=[self.w,self.xprec_pre,self.hprec_pre]
 
-          self.E = (T.dot(self.x*self.x,self.xprec)+T.dot(self.h*self.h,self.hprec)
-                  -T.sum(self.h*T.dot(self.x,self.w),axis=1)).mean()
+          self.E = T.sum(T.dot(self.x*self.x,self.xprec)+T.dot(self.h*self.h,self.hprec)
+                  -T.sum(self.h*T.dot(self.x,self.w),axis=1))
 
-          self.E_n = (T.dot(self.x_n*self.x_n,self.xprec)+T.dot(self.h_n*self.h_n,self.hprec)
-                   -T.sum(self.h_n*T.dot(self.x_n,self.w),axis=1)).mean()
+          self.E_n = T.sum(T.dot(self.x_n*self.x_n,self.xprec)+T.dot(self.h_n*self.h_n,self.hprec)
+                   -T.sum(self.h_n*T.dot(self.x_n,self.w),axis=1))
 
           self.set_R()
           self.set_R_noise()
@@ -118,10 +118,10 @@ class EMinferencer(object):
 
 
 class LangevinEMinferencer(EMinferencer):
-      def __init__(self, energyfn, epsilon=0.1, n_inference_it=3):
+      def __init__(self, energyfn, epsilon=0.5, n_inference_it=3):
           super(LangevinEMinferencer, self).__init__(energyfn)
           self.n_inference_it=n_inference_it
-          self.new_h = self.energyfn.h - epsilon*self.energyfn.dEdh + gaussian(0.*self.energyfn.h,1)*energyfn.sigma
+          self.new_h = self.energyfn.h - epsilon * self.energyfn.sigma**2 * self.energyfn.dEdh + gaussian(0.*self.energyfn.h,1)*energyfn.sigma
           self.set_infer = False
 
       def set_inference(self, x, h, batchsize):
@@ -197,6 +197,8 @@ class EMdsm(EMmodels):
                    self.inferencer.inference_h(k)
                    self.update_params(k)
               if e % 100 == 0:
+                  print
+                  print "epoch = ", e
                   self.print_monitor()
            
       def monitor(self):
@@ -230,19 +232,19 @@ class EMdsm(EMmodels):
 def exp():
     # information about x
     # TOY GAUSSIAN DATA 2D
-    toy_num = 10000
+    toy_num = 1000
     toy_mean = [0, 0]
     toy_nstd = [[3, 1.5],[1.5, 1]]
     #toy_nstd = [[2]]
     train_x = sharedX(np.random.multivariate_normal(toy_mean, toy_nstd, toy_num))
 
-    max_epoch = 10000
-    batchsize = 50
+    max_epoch = 1000000
+    batchsize = 20
     nx, nh = 2, 1
 
-    energyfn = GaussianEnergy(nx, nh, sigma=0.01)
+    energyfn = GaussianEnergy(nx, nh, sigma=0.001)
     opt = adam()
-    inferencer = LangevinEMinferencer(energyfn, epsilon=0.1, n_inference_it=3)
+    inferencer = LangevinEMinferencer(energyfn, epsilon=0.5, n_inference_it=100)
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
     model.mainloop(max_epoch)
 
