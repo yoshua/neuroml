@@ -242,9 +242,9 @@ def exp():
     batchsize = 20
     nx, nh = 2, 1
 
-    energyfn = GaussianEnergy(nx, nh, sigma=0.001)
+    energyfn = GaussianEnergy(nx, nh, sigma=0.01)
     opt = adam()
-    inferencer = LangevinEMinferencer(energyfn, epsilon=0.5, n_inference_it=100)
+    inferencer = LangevinEMinferencer(energyfn, epsilon=0.5, n_inference_it=3)
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
     model.mainloop(max_epoch)
 
