@@ -9,9 +9,11 @@ from theano.sandbox.rng_mrg import MRG_RandomStreams
 
 def sharedX(x) : return theano.shared( theano._asarray(x, dtype=theano.config.floatX) ) 
 def softplus(x) : return T.nnet.softplus(x)
+def relu(x) : return x * (x > 1e-15)
+def rho(x) : return relu(x+0.5) - relu(x-0.5)
+ 
 RNG = MRG_RandomStreams(max(np.random.RandomState(1364).randint(2 ** 15), 1))
 def gaussian(x, std, rng=RNG) : return x + rng.normal(std=std, size=x.shape, dtype=x.dtype)
-
 
 class adam(object):
       def __init__(self, alpha=0.001,beta1=0.9,beta2=.999,epsilon=1e-8,lambd=(1-1e-8)):
@@ -92,7 +94,7 @@ class GaussianEnergy(LatentEnergyFn):
           super(GaussianEnergy, self).__init__(sigma,nx,nh)
           self.hprec_pre=sharedX(np.random.normal(0,inithsigma,nh))
           self.hprec=softplus(self.hprec_pre)
-          self.xprec_pre=sharedX(np.random.normal(0,inithsigma,nx))
+          self.xprec_pre=sharedX(np.random.normal(0,initxsigma,nx))
           self.xprec=softplus(self.xprec_pre)
           self.w=sharedX(np.random.normal(0,initwsigma,(nx,nh)))
           self.params=[self.w,self.xprec_pre,self.hprec_pre]
@@ -107,6 +109,34 @@ class GaussianEnergy(LatentEnergyFn):
           self.set_R_noise()
 
           self.monitor = theano.function([], [self.hprec, self.xprec, self.w])
+
+      def params_monitor(self):
+          return self.monitor()
+
+
+class NeuroEnergy(LatentEnergyFn):
+      def __init__(self, nx, nh, sigma=0.01, inithsigma=0.1, initxsigma=0.1, initwsigma=0.1):
+         super(NeuroEnergy, self).__init__(sigma, nx, nh) 
+         self.w_h = sharedX(np.random.normal(0,inithsigma,nh))
+         self.b_h = sharedX(np.zeros(nh))
+         self.w_x = sharedX(np.random.normal(0,initxsigma,nx))
+         self.b_x = sharedX(np.zeros(nx))
+         self.w = sharedX(np.random.normal(0,initwsigma,(nx,nh)))
+         self.params = [self.w_h, self.b_h, self.w_x, self.b_x, self.w]
+
+         self.E = (T.sum(rho(self.x)**2) + T.sum(rho(self.h)**2))/(2*sigma**2) \
+                  -(T.sum(T.dot(rho(self.x)*rho(self.x), self.w_x)+T.dot(rho(self.h)*rho(self.h), self.w_h) \
+                  -T.sum(rho(self.h)*T.dot(rho(self.x),self.w), axis=1)))/(2*sigma**2) \
+                  #+T.sum(T.dot(rho(self.h), self.b_h)) + T.sum(T.dot(rho(self.x), self.b_x))
+
+         self.E_n = (T.sum(rho(self.x_n)**2) + T.sum(rho(self.h_n)**2))/(2*sigma**2) \
+                    -(T.sum(T.dot(rho(self.x_n)*rho(self.x_n), self.w_x)+T.dot(rho(self.h_n)*rho(self.h_n), self.w_h) \
+                    -T.sum(rho(self.h_n)*T.dot(rho(self.x_n), self.w),axis=1)))/(2*sigma**2) \
+                    +T.sum(T.dot(rho(self.h_n), self.b_h)) + T.sum(T.dot(rho(self.x_n), self.b_x))
+
+         self.set_R()
+         self.set_R_noise()
+         self.monitor = theano.function([], self.params)
 
       def params_monitor(self):
           return self.monitor()
@@ -199,7 +229,7 @@ class EMdsm(EMmodels):
               if e % 100 == 0:
                   print
                   print "epoch = ", e
-                  self.print_monitor()
+                  #self.print_monitor()
            
       def monitor(self):
           [w_h, w_x, w] = self.energyfn.params_monitor()
@@ -242,7 +272,8 @@ def exp():
     batchsize = 20
     nx, nh = 2, 1
 
-    energyfn = GaussianEnergy(nx, nh, sigma=0.01)
+    #energyfn = GaussianEnergy(nx, nh, sigma=0.01)
+    energyfn = NeuroEnergy(nx, nh, sigma=0.01)
     opt = adam()
     inferencer = LangevinEMinferencer(energyfn, epsilon=0.5, n_inference_it=3)
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
