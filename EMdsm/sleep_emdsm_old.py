@@ -43,12 +43,14 @@ class adam(object):
           new_m = beta_t*m + (1-beta_t)*gradient
           mm = m*(1./(1.-beta_t))
           new_v = self.beta2*v + (1-self.beta2)*gradient*gradient
-          vv = self.epsilon+T.sqrt(new_v*(1./(1.-self.beta2)))
-          return (theta-self.alpha*mm/vv, (new_m,new_v,new_t))
+          if self.beta2<1:
+            vv = self.epsilon+T.sqrt(new_v*(1./(1.-self.beta2)))
+            return (theta-self.alpha*mm/vv, (new_m,new_v,new_t))
+          else: return (theta - self.alpha*mm, (new_m,new_v,new_t))
 
       def initialize_aux(self,shape):
           m = sharedX(np.zeros(shape))
-          v = sharedX(np.zeros(shape))
+          v = sharedX(np.zeros(shape)+1.)
           t = sharedX(np.zeros(()))
           return (m,v,t)
 
@@ -119,41 +121,51 @@ def exp_old(max_ep = 200, batsize = 10, opt=adam()):
     monitor_params = theano.function([], [w, w_x, w_h])
 
     # cost, updates
-    cost = (T.mean(delta_x**2) + T.mean(delta_h**2))/(sigma**2) + 0.001*softplus(5*(0.1-determinant)) + 0.01*softplus(100*(0.01-determinant))
-    updates =[]
+    reconstruction_cost = T.mean(delta_x**2)/(sigma**2)
+    cost = reconstruction_cost + T.mean(delta_h**2)/(sigma**2) + 0.001*softplus(5*(0.1-determinant)) + 0.01*softplus(100*(0.01-determinant))
+    params_updates =[]
     for (param,aux) in [(w,w_aux), (theta_x,theta_x_aux), (theta_h,theta_h_aux)]: 
       (new_param, new_aux) = opt.update(param,T.grad(cost,param),aux)
-      updates.append((param, new_param))
+      params_updates.append((param, new_param))
       for i_ in range(len(aux)):
           assert aux[i_].ndim == new_aux[i_].ndim
-          updates.append((aux[i_],new_aux[i_]))
-    sleep_updates = updates + [(H,H_new),(X,freeX_new)]
-    wake_updates = updates + [(H,H_new),(X,clampedX_new)]
+          params_updates.append((aux[i_],new_aux[i_]))
+    sleep_updates = params_updates + [(H,H_new),(X,freeX_new)]
+    wake_updates = params_updates + [(H,H_new),(X,clampedX_new)]
     notrain_sleep_updates = [(H,H_new),(X,freeX_new)]
     notrain_wake_updates = [(H,H_new),(X,clampedX_new)]
+    inference_updates = [(H,H_new)]
 
     # training givens
     givens_wake = lambda i : { obsX : train_x[ i*batch_size : (i+1)*batch_size ]}
 
     # training and testing function
     
-    notrain_sleep = theano.function([i, e], [cost, H_direct, determinant], 
+    notrain_sleep = theano.function([i, e], [reconstruction_cost, H_direct, determinant], 
                                   on_unused_input='ignore', updates = notrain_sleep_updates)
 
 
-    notrain_wake = theano.function([i, e], [cost, H_direct, determinant], 
+    notrain_wake = theano.function([i, e], [reconstruction_cost, H_direct, determinant], 
                                  givens = givens_wake(i), on_unused_input='ignore',
                                  updates = notrain_wake_updates)
 
-    train_sleep = theano.function([i, e], [cost, H_direct, determinant], 
+    inference_update = theano.function([i, e], [reconstruction_cost, H_direct, determinant], 
+                                           givens = givens_wake(i), on_unused_input='ignore',
+                                           updates = inference_updates)
+
+    update_params = theano.function([i, e], [],
+                                           givens = givens_wake(i), on_unused_input='ignore',
+                                           updates = params_updates)
+
+    train_sleep = theano.function([i, e], [reconstruction_cost, H_direct, determinant], 
                                   on_unused_input='ignore', updates = sleep_updates)
 
 
-    train_wake = theano.function([i, e], [cost, H_direct, determinant], 
+    train_wake = theano.function([i, e], [reconstruction_cost, H_direct, determinant], 
                                  givens = givens_wake(i), on_unused_input='ignore',
                                  updates = wake_updates)
 
-    train_sync_notup = theano.function([i, e], [cost, H_new, H_direct, E,determinant], 
+    train_sync_notup = theano.function([i, e], [reconstruction_cost, H_new, H_direct, E,determinant], 
                                        givens = givens_wake(i), on_unused_input='ignore')
 
     marginal_nll = theano.function([data,marginal_precision],[avg_nll])
@@ -184,14 +196,21 @@ def exp_old(max_ep = 200, batsize = 10, opt=adam()):
             result = []
             for i in range(n_batches):
                 H.set_value(np.zeros((batch_size,1)))
-                X.set_value(train_x.get_value()[i*batch_size:(i+1)*batch_size]+np.random.normal(0,scale=0.1,size=X.get_value().shape)) # initialize sleep phase from true data
+                initialXnoise = 0.0
+                X.set_value(train_x.get_value()[i*batch_size:(i+1)*batch_size]+initialXnoise*np.random.normal(0,scale=1,size=X.get_value().shape)) # initialize sleep phase from true data
                 #if sign_error>0.8: print "sign error = ",sign_error," # H0 =",h[0,0]
-                for t in range(5):
-                    [cost, hstar, det] = notrain_sleep(i, e)
-                for t in range(5):
+                opt.alpha=0.0001
+                for t in range(10):
+                    [cost, hstar, det] = train_sleep(i, e)
+                for t in range(0):
                     [cost, hstar, det] = notrain_wake(i, e)
-                [cost, hstar, det] = train_wake(i, e)
-                result = result + [cost]
+                for t in range(0):
+                    [cost, hstar, det] = inference_update(i, e)
+                opt.alpha=0.001
+                for t in range(10):
+                    [cost, hstar, det] = train_wake(i, e)
+                #update_params(i, e)
+                #result = result + [cost]
                 h=H.get_value()
                 #sign_error = 0.5*np.mean(np.abs(np.sign(h)-np.sign(hstar)))
                 #if sign_error>0.8 or det<=0:
@@ -200,7 +219,7 @@ def exp_old(max_ep = 200, batsize = 10, opt=adam()):
             if e%100==0:
               monitor['train'].append( np.array(result).mean(axis=0) )
               #monitor['train'].append(  np.array([ train_sync(i, e) for i in range(n_batches) ]).mean(axis=0)  )
-              print "e=",e," train:",monitor['train'][-1], "determinant=",det," precision = ",np.array([[w_x_[0], 0, 0.5*w_[0]],[0, w_x_[1], 0.5*w_[1]],[0.5*w_[0], 0.5*w_[1], w_h_]])*2
+              print "e=",e," reconstruction ERROR:",cost, "determinant=",det #," precision = ",np.array([[w_x_[0], 0, 0.5*w_[0]],[0, w_x_[1], 0.5*w_[1]],[0.5*w_[0], 0.5*w_[1], w_h_]])*2
               #print np.linalg.inv(np.array([monitor['monitor_params'][-1][1], monitor['monitor_params'][-1][0], monitor['monitor_params'][-1][0], monitor['monitor_params'][-1][2]]).reshape(2,2)*2)
               precision.set_value(np.array([[w_x_[0], 0, 0.5*w_[0]],[0, w_x_[1], 0.5*w_[1]],[0.5*w_[0], 0.5*w_[1], w_h_]])*2)
               # print "precision=",precision.get_value()
@@ -211,5 +230,8 @@ def exp_old(max_ep = 200, batsize = 10, opt=adam()):
               #print np.linalg.det(np.linalg.inv(np.array([[w_x_[0], 0, 0.5*w_[0]],[0, w_x_[1], 0.5*w_[1]],[0.5*w_[0], 0.5*w_[1], w_h_]])*2)[:0:2][0:2]) #(w_x_[0][1]+w_x_[1][0])/2
 
 if __name__ == "__main__":
-    exp_old(100000, 256)
+    # sgd
+    exp_old(100000, 256,adam(alpha=.01,beta1=0,beta2=1,epsilon=1))
+    # adam
+    exp_old(100000, 256,adam(alpha=.01,beta1=0,beta2=1,epsilon=1))
 
