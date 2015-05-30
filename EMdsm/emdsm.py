@@ -232,14 +232,14 @@ class EMdsm(EMmodels):
 def exp():
     # information about x
     # TOY GAUSSIAN DATA 2D
-    toy_num = 1000
+    batchsize = 128
+    toy_num = batchsize*10
     toy_mean = [0, 0]
     toy_nstd = [[3, 1.5],[1.5, 1]]
     #toy_nstd = [[2]]
     train_x = sharedX(np.random.multivariate_normal(toy_mean, toy_nstd, toy_num))
 
     max_epoch = 1000000
-    batchsize = 20
     nx, nh = 2, 1
 
     energyfn = GaussianEnergy(nx, nh, sigma=0.01)
