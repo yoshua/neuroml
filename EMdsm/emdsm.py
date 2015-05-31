@@ -156,7 +156,7 @@ class LangevinEMinferencer(EMinferencer):
       def __init__(self, energyfn, epsilon=0.1, n_inference_it=3):
           super(LangevinEMinferencer, self).__init__(energyfn)
           self.n_inference_it=n_inference_it
-          self.new_h = self.energyfn.h - epsilon * self.energyfn.sigma**2*self.energyfn.dEdh + gaussian(0.*self.energyfn.h,1)*energyfn.sigma
+          self.new_h = self.energyfn.h - epsilon * self.energyfn.sigma**2*self.energyfn.dEdh # + gaussian(0.*self.energyfn.h,1)*energyfn.sigma
           self.set_infer = False
 
       def set_inference(self, x, h, batchsize):
@@ -171,7 +171,8 @@ class LangevinEMinferencer(EMinferencer):
           if not self.set_infer:
              raise ValueError("Call set_inference before doing inference!")
           for n_init in xrange(self.n_inference_it):
-              self.update_h(ind)
+              (h,)=self.update_h(ind)
+              #print "t=",n_init,"h=",h[0]
 
       def reset_h(self, h, h_new):
           if h.get_value().shape != h_new.shape:
@@ -221,6 +222,11 @@ class EMdsm(EMmodels):
                updates = self.optimizer.get_updates(),
                givens = {self.energyfn.x : x[self.index*self.batchsize : (self.index+1)*self.batchsize], self.energyfn.h : self.h})
 
+          self.dEdh_ = theano.function([self.index],[self.energyfn.dEdh],
+               givens = {self.energyfn.x : x[self.index*self.batchsize : (self.index+1)*self.batchsize], self.energyfn.h : self.h})
+          self.dEdx_ = theano.function([self.index],[self.energyfn.dEdx],
+               givens = {self.energyfn.x : x[self.index*self.batchsize : (self.index+1)*self.batchsize], self.energyfn.h : self.h})
+
       def update_params(self, ind):
           values = []
           for t in xrange(self.n_params_update_it):
@@ -232,6 +238,7 @@ class EMdsm(EMmodels):
               values = []
               for k in xrange(self.n_batch):
                    self.inferencer.reset_h(self.h, np.zeros((self.batchsize, self.energyfn.nh)))
+                   #pdb.set_trace()
                    self.inferencer.inference_h(k)
                    values.append(self.update_params(k))
            
@@ -274,18 +281,18 @@ def exp():
     # TOY GAUSSIAN DATA 2D
     toy_num = 10000
     toy_mean = [0, 0]
-    toy_nstd = [[1, 1.5],[1.5, 1]]
+    toy_nstd = [[0.1, .15],[.15, .1]]
     #toy_nstd = [[2]]
     train_x = sharedX(np.random.multivariate_normal(toy_mean, toy_nstd, toy_num))
 
     max_epoch = 1000000
-    batchsize = 256
+    batchsize = 1
     nx, nh = 2, 1
-
-    #energyfn = GaussianEnergy(nx, nh, sigma=0.005)
-    energyfn = NeuroEnergy(nx, nh, sigma=0.001)
+    sigma = 0.1
+    #energyfn = GaussianEnergy(nx, nh, sigma=sigma)
+    energyfn = NeuroEnergy(nx, nh, sigma=sigma)
     opt = adam()
-    inferencer = LangevinEMinferencer(energyfn, epsilon=0.56, n_inference_it=3)
+    inferencer = LangevinEMinferencer(energyfn, epsilon=0.25/(sigma*sigma), n_inference_it=10)
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
     model.mainloop(max_epoch)
 
