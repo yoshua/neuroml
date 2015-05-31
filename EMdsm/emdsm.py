@@ -88,6 +88,8 @@ class LatentEnergyFn(object):
           self.Rh_n = self.h_n - self.sigma**2 * self.dEdh_n
           self.Rx_n = self.x_n - self.sigma**2 * self.dEdx_n
 
+      def penality(self):
+          return 0
 
 class GaussianEnergy(LatentEnergyFn):
       def __init__(self,nx,nh,sigma=0.01,inithsigma=0.1,initxsigma=0.1,initwsigma=0.1):
@@ -110,6 +112,12 @@ class GaussianEnergy(LatentEnergyFn):
 
           self.monitor = theano.function([], [self.hprec, self.xprec, self.w])
 
+      def penality(self):
+          
+          self.determinant = self.xprec[0]*self.xprec[1]*self.hprec[0]-0.25*(self.xprec[0]*self.w[1,0]**2+self.xprec[1]*self.w[0,0]**2)
+          #pdb.set_trace()
+          return 0.001*softplus(5*(0.1-self.determinant)) + 0.01*softplus(100*(0.01- self.determinant))
+
       def params_monitor(self):
           return self.monitor()
 
@@ -122,17 +130,17 @@ class NeuroEnergy(LatentEnergyFn):
          self.w_x = sharedX(np.random.normal(0,initxsigma,nx))
          self.b_x = sharedX(np.zeros(nx))
          self.w = sharedX(np.random.normal(0,initwsigma,(nx,nh)))
-         self.params = [self.w_h, self.b_h, self.w_x, self.b_x, self.w]
+         self.params = [self.w, self.b_h, self.b_x]
 
-         self.E = (T.sum(rho(self.x)**2) + T.sum(rho(self.h)**2))/(2*sigma**2) \
+         self.E = (T.sum(self.x**2) + T.sum(self.h**2))/(2*sigma**2) \
                   -(T.sum(T.dot(rho(self.x)*rho(self.x), self.w_x)+T.dot(rho(self.h)*rho(self.h), self.w_h) \
-                  -T.sum(rho(self.h)*T.dot(rho(self.x),self.w), axis=1)))/(2*sigma**2) \
-                  #+T.sum(T.dot(rho(self.h), self.b_h)) + T.sum(T.dot(rho(self.x), self.b_x))
+                  -T.sum(rho(self.h)*T.dot(rho(self.x),self.w), axis=1)) \
+                  +T.sum(T.dot(rho(self.h), self.b_h)) + T.sum(T.dot(rho(self.x), self.b_x)))/(2*sigma**2)
 
-         self.E_n = (T.sum(rho(self.x_n)**2) + T.sum(rho(self.h_n)**2))/(2*sigma**2) \
+         self.E_n = (T.sum(self.x_n**2) + T.sum(self.h_n**2))/(2*sigma**2) \
                     -(T.sum(T.dot(rho(self.x_n)*rho(self.x_n), self.w_x)+T.dot(rho(self.h_n)*rho(self.h_n), self.w_h) \
-                    -T.sum(rho(self.h_n)*T.dot(rho(self.x_n), self.w),axis=1)))/(2*sigma**2) \
-                    +T.sum(T.dot(rho(self.h_n), self.b_h)) + T.sum(T.dot(rho(self.x_n), self.b_x))
+                    -T.sum(rho(self.h_n)*T.dot(rho(self.x_n), self.w),axis=1)) \
+                    +T.sum(T.dot(rho(self.h_n), self.b_h)) + T.sum(T.dot(rho(self.x_n), self.b_x)))/(2*sigma**2)
 
          self.set_R()
          self.set_R_noise()
@@ -148,10 +156,10 @@ class EMinferencer(object):
 
 
 class LangevinEMinferencer(EMinferencer):
-      def __init__(self, energyfn, epsilon=0.5, n_inference_it=3):
+      def __init__(self, energyfn, epsilon=0.1, n_inference_it=3):
           super(LangevinEMinferencer, self).__init__(energyfn)
           self.n_inference_it=n_inference_it
-          self.new_h = self.energyfn.h - epsilon * self.energyfn.sigma**2 * self.energyfn.dEdh + gaussian(0.*self.energyfn.h,1)*energyfn.sigma
+          self.new_h = self.energyfn.h - epsilon * self.energyfn.sigma**2*self.energyfn.dEdh + gaussian(0.*self.energyfn.h,1)*energyfn.sigma
           self.set_infer = False
 
       def set_inference(self, x, h, batchsize):
@@ -198,7 +206,7 @@ class EMdsm(EMmodels):
           # set cost
           # TODO: do we need determinant in cost?
           self.cost = T.mean((self.energyfn.Rh_n - self.energyfn.h)**2) \
-                      + T.mean((self.energyfn.Rx_n - self.energyfn.x)**2)
+                      + T.mean((self.energyfn.Rx_n - self.energyfn.x)**2) + self.energyfn.penality()
 
           # set optimizer
           self.optimizer = optimizer
@@ -222,14 +230,16 @@ class EMdsm(EMmodels):
 
       def mainloop(self, max_epoch = 100):
           for e in xrange(max_epoch):
+              if e % 100 == 0:
+                  print
+                  print "epoch = ", e
+                  print self.energyfn.params_monitor()
+                  #self.print_monitor()
+
               for k in xrange(self.n_batch):
                    self.inferencer.reset_h(self.h, np.zeros((self.batchsize, self.energyfn.nh)))
                    self.inferencer.inference_h(k)
                    self.update_params(k)
-              if e % 100 == 0:
-                  print
-                  print "epoch = ", e
-                  #self.print_monitor()
            
       def monitor(self):
           [w_h, w_x, w] = self.energyfn.params_monitor()
@@ -249,33 +259,33 @@ class EMdsm(EMmodels):
 
           return precision, cov, params
 
-      def print_monitor(self):
-          [precision, cov, params] = self.monitor()
-          print "model precision = "
-          print precision
-          print "model cov = "
-          print cov
-          print "model params = "
-          print params
+#      def print_monitor(self):
+#          [precision, cov, params] = self.monitor()
+#          print "model precision = "
+#          print precision
+#          print "model cov = "
+#          print cov
+#          print "model params = "
+#          print params
 
 
 def exp():
     # information about x
     # TOY GAUSSIAN DATA 2D
-    toy_num = 1000
+    toy_num = 10000
     toy_mean = [0, 0]
     toy_nstd = [[3, 1.5],[1.5, 1]]
     #toy_nstd = [[2]]
     train_x = sharedX(np.random.multivariate_normal(toy_mean, toy_nstd, toy_num))
 
     max_epoch = 1000000
-    batchsize = 20
+    batchsize = 256
     nx, nh = 2, 1
 
-    #energyfn = GaussianEnergy(nx, nh, sigma=0.01)
-    energyfn = NeuroEnergy(nx, nh, sigma=0.01)
+    #energyfn = GaussianEnergy(nx, nh, sigma=0.005)
+    energyfn = NeuroEnergy(nx, nh, sigma=0.001)
     opt = adam()
-    inferencer = LangevinEMinferencer(energyfn, epsilon=0.5, n_inference_it=3)
+    inferencer = LangevinEMinferencer(energyfn, epsilon=0.56, n_inference_it=3)
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
     model.mainloop(max_epoch)
 
