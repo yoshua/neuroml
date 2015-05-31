@@ -125,29 +125,26 @@ class GaussianEnergy(LatentEnergyFn):
 class NeuroEnergy(LatentEnergyFn):
       def __init__(self, nx, nh, sigma=0.01, inithsigma=0.1, initxsigma=0.1, initwsigma=0.1):
          super(NeuroEnergy, self).__init__(sigma, nx, nh) 
-         self.w_h = sharedX(np.random.normal(0,inithsigma,nh))
+         #self.w_h = sharedX(np.random.normal(0,inithsigma,nh))
          self.b_h = sharedX(np.zeros(nh))
-         self.w_x = sharedX(np.random.normal(0,initxsigma,nx))
+         #self.w_x = sharedX(np.random.normal(0,initxsigma,nx))
          self.b_x = sharedX(np.zeros(nx))
          self.w = sharedX(np.random.normal(0,initwsigma,(nx,nh)))
          self.params = [self.w, self.b_h, self.b_x]
 
-         self.E = (T.sum(self.x**2) + T.sum(self.h**2))/(2*sigma**2) \
-                  -(T.sum(T.dot(rho(self.x)*rho(self.x), self.w_x)+T.dot(rho(self.h)*rho(self.h), self.w_h) \
-                  -T.sum(rho(self.h)*T.dot(rho(self.x),self.w), axis=1)) \
-                  +T.sum(T.dot(rho(self.h), self.b_h)) + T.sum(T.dot(rho(self.x), self.b_x)))/(2*sigma**2)
-
-         self.E_n = (T.sum(self.x_n**2) + T.sum(self.h_n**2))/(2*sigma**2) \
-                    -(T.sum(T.dot(rho(self.x_n)*rho(self.x_n), self.w_x)+T.dot(rho(self.h_n)*rho(self.h_n), self.w_h) \
-                    -T.sum(rho(self.h_n)*T.dot(rho(self.x_n), self.w),axis=1)) \
-                    +T.sum(T.dot(rho(self.h_n), self.b_h)) + T.sum(T.dot(rho(self.x_n), self.b_x)))/(2*sigma**2)
+         self.E_fn = lambda x,h,b_h,b_x,w: \
+                       T.sum(x*x) + T.sum(h*h) -T.sum(rho(h)*T.dot(rho(x),self.w)) \
+                       - T.dot(rho(h), b_h).sum() - T.dot(rho(x), b_x).sum()
+         # /(2*sigma**2) \
+         self.E = self.E_fn(self.x,self.h,self.b_h,self.b_x,self.w)
+         self.E_n = self.E_fn(self.x_n,self.h_n,self.b_h,self.b_x,self.w)
 
          self.set_R()
          self.set_R_noise()
          self.monitor = theano.function([], self.params)
 
       def params_monitor(self):
-          return self.monitor()
+          return ["w","b_h","b_x",self.monitor()]
 
 
 class EMinferencer(object):
@@ -204,9 +201,9 @@ class EMdsm(EMmodels):
           self.h = sharedX(np.zeros((self.batchsize, self.energyfn.nh)))
 
           # set cost
-          # TODO: do we need determinant in cost?
-          self.cost = T.mean((self.energyfn.Rh_n - self.energyfn.h)**2) \
-                      + T.mean((self.energyfn.Rx_n - self.energyfn.x)**2) + self.energyfn.penality()
+          self.cost = T.sum((self.energyfn.Rh_n - self.energyfn.h)**2) \
+                      + T.sum((self.energyfn.Rx_n - self.energyfn.x)**2) + self.energyfn.penality()
+          self.reconstruction_cost = T.sum((self.energyfn.Rx_n - self.energyfn.x)**2)
 
           # set optimizer
           self.optimizer = optimizer
@@ -218,31 +215,34 @@ class EMdsm(EMmodels):
 
           # define parameter update function
           self.index = T.iscalar()
+          self.update_p_names = ["cost","reconstruction_cost","E"]
           self.update_p = theano.function(
-               [self.index], [self.cost],
+               [self.index], [self.cost/minibatchsize,self.reconstruction_cost/minibatchsize,self.energyfn.E/minibatchsize],
                updates = self.optimizer.get_updates(),
                givens = {self.energyfn.x : x[self.index*self.batchsize : (self.index+1)*self.batchsize], self.energyfn.h : self.h})
 
-
       def update_params(self, ind):
+          values = []
           for t in xrange(self.n_params_update_it):
-              self.update_p(ind)
+              values.append(self.update_p(ind))
+          return values
 
       def mainloop(self, max_epoch = 100):
           for e in xrange(max_epoch):
-              if e % 100 == 0:
-                  print
-                  print "epoch = ", e
-                  print self.energyfn.params_monitor()
-                  #self.print_monitor()
-
+              values = []
               for k in xrange(self.n_batch):
                    self.inferencer.reset_h(self.h, np.zeros((self.batchsize, self.energyfn.nh)))
                    self.inferencer.inference_h(k)
-                   self.update_params(k)
+                   values.append(self.update_params(k))
            
+              if e % 1 == 0:
+                  print
+                  print "epoch = ", e
+                  print self.update_p_names,values[self.n_batch-1],"params=",self.energyfn.params_monitor()
+                  #self.print_monitor()
+
       def monitor(self):
-          [w_h, w_x, w] = self.energyfn.params_monitor()
+          [E, w_h, w_x, w] = self.energyfn.params_monitor(self)
 
           nx = self.energyfn.nx
           nh = self.energyfn.nh
@@ -274,7 +274,7 @@ def exp():
     # TOY GAUSSIAN DATA 2D
     toy_num = 10000
     toy_mean = [0, 0]
-    toy_nstd = [[3, 1.5],[1.5, 1]]
+    toy_nstd = [[1, 1.5],[1.5, 1]]
     #toy_nstd = [[2]]
     train_x = sharedX(np.random.multivariate_normal(toy_mean, toy_nstd, toy_num))
 
