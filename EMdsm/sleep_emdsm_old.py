@@ -46,7 +46,7 @@ class adam(object):
           if self.beta2<1:
             vv = self.epsilon+T.sqrt(new_v*(1./(1.-self.beta2)))
             return (theta-self.alpha*mm/vv, (new_m,new_v,new_t))
-          else: return (theta - self.alpha*mm, (new_m,new_v,new_t))
+          else: return (theta - self.alpha*gradient, (new_m,new_v,new_t))
 
       def initialize_aux(self,shape):
           m = sharedX(np.zeros(shape))
@@ -113,7 +113,8 @@ def exp_old(max_ep = 200, batsize = 10, opt=adam()):
     # the update of X with obsX not given, i.e., X is totally free
     freeX_new = X - eps * (2*w_x*X + T.dot(H, w.T) ) + gaussian(0.*X_0, 1)*sigma
     # the update of X with obsX given
-    clampedX_new = X - eps * (2*w_x*X - obsX) + gaussian(0.*X_0, 1)*sigma
+    #clampedX_new = X - eps * (2*w_x*X - obsX) + gaussian(0.*X_0, 1)*sigma
+    clampedX_new = X - eps * (X - obsX) + gaussian(0.*X_0, 1)*sigma
 
     #dEdH = (2*w_h*H + T.dot(X, w) )
 
@@ -122,7 +123,7 @@ def exp_old(max_ep = 200, batsize = 10, opt=adam()):
 
     # cost, updates
     reconstruction_cost = T.mean(delta_x**2)/(sigma**2)
-    cost = reconstruction_cost + T.mean(delta_h**2)/(sigma**2) + 0.001*softplus(5*(0.1-determinant)) + 0.01*softplus(100*(0.01-determinant))
+    cost = reconstruction_cost + T.mean(delta_h**2)/(sigma**2) + 0.00001*(0.001*softplus(5*(0.1-determinant)) + 0.01*softplus(100*(0.01-determinant)))
     params_updates =[]
     for (param,aux) in [(w,w_aux), (theta_x,theta_x_aux), (theta_h,theta_h_aux)]: 
       (new_param, new_aux) = opt.update(param,T.grad(cost,param),aux)
@@ -140,7 +141,9 @@ def exp_old(max_ep = 200, batsize = 10, opt=adam()):
     givens_wake = lambda i : { obsX : train_x[ i*batch_size : (i+1)*batch_size ]}
 
     # training and testing function
-    
+
+    obj_fun = theano.function([], [cost], on_unused_input='ignore')
+
     notrain_sleep = theano.function([i, e], [reconstruction_cost, H_direct, determinant], 
                                   on_unused_input='ignore', updates = notrain_sleep_updates)
 
@@ -150,11 +153,11 @@ def exp_old(max_ep = 200, batsize = 10, opt=adam()):
                                  updates = notrain_wake_updates)
 
     inference_update = theano.function([i, e], [reconstruction_cost, H_direct, determinant], 
-                                           givens = givens_wake(i), on_unused_input='ignore',
+                                           on_unused_input='ignore',
                                            updates = inference_updates)
 
     update_params = theano.function([i, e], [],
-                                           givens = givens_wake(i), on_unused_input='ignore',
+                                           on_unused_input='ignore',
                                            updates = params_updates)
 
     train_sleep = theano.function([i, e], [reconstruction_cost, H_direct, determinant], 
@@ -206,10 +209,15 @@ def exp_old(max_ep = 200, batsize = 10, opt=adam()):
                     [cost, hstar, det] = notrain_wake(i, e)
                 for t in range(0):
                     [cost, hstar, det] = inference_update(i, e)
-                opt.alpha=0.001
+                #opt.alpha=0.001
                 for t in range(10):
                     [cost, hstar, det] = train_wake(i, e)
-                #update_params(i, e)
+                #J = obj_fun()
+                #if i==0: print "old_cost =",J
+                update_params(i, e)
+                #if i==0: print theta_x.get_value(),theta_h.get_value(),w.get_value()
+                #J = obj_fun()
+                #if i==0: print "new_cost =",J
                 #result = result + [cost]
                 h=H.get_value()
                 #sign_error = 0.5*np.mean(np.abs(np.sign(h)-np.sign(hstar)))
@@ -231,7 +239,7 @@ def exp_old(max_ep = 200, batsize = 10, opt=adam()):
 
 if __name__ == "__main__":
     # sgd
-    exp_old(100000, 256,adam(alpha=.01,beta1=0,beta2=1,epsilon=1))
+    #exp_old(100000, 256,adam(alpha=.1,beta1=0,beta2=1,epsilon=1))
     # adam
-    exp_old(100000, 256,adam(alpha=.01,beta1=0,beta2=1,epsilon=1))
+    exp_old(100000, 256)
 
