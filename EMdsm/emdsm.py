@@ -464,5 +464,5 @@ def plot_energy():
 
     
 if __name__ == "__main__":
-    plot_energy()
+    exp() 
 
