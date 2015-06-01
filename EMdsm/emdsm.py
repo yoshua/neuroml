@@ -4,8 +4,12 @@ from theano import tensor as T
 #from util import *
 import pdb
 # from theano.tensor import nnet
-# from theano.tensor.nnet import softplus
+from theano.tensor.nnet import softplus
 from theano.sandbox.rng_mrg import MRG_RandomStreams
+
+# for interactive things
+import matplotlib.pyplot as mp
+import pylab as pl
 
 def sharedX(x) : return theano.shared( theano._asarray(x, dtype=theano.config.floatX) ) 
 def softplus(x) : return T.nnet.softplus(x)
@@ -59,8 +63,55 @@ class adam(object):
           return (m,v,t)
 
 
+class sgd(object):
+      def __init__(self, lrate=0.01):
+          self.lrate=lrate
+          self.set_up = False
+
+      def set_updates(self, params, cost):
+          self.set_up = True
+          self.auxs = []
+          for i in xrange(len(params)):
+              self.auxs.append(self.initialize_aux(params[i].get_value().shape))
+          self.updates = []
+          for (param, aux) in zip(params, self.auxs):
+              [new_param, new_aux] = self.update(param, T.grad(cost, param), aux) 
+              self.updates.append((param, new_param))
+              for i_ in range(len(aux)):
+                  assert aux[i_].ndim == new_aux[i_].ndim
+                  self.updates.append((aux[i_],new_aux[i_]))
+
+      def get_updates(self):
+          if not self.set_up:
+              raise ValueError("call set_updates before doing updates!")
+          return self.updates
+ 
+      def update(self,theta,gradient,aux):
+          return (theta-self.lrate*gradient, aux)
+
+      def initialize_aux(self,shape):
+          return ()
+
+
+def plot_generated_samples(prev_x,x,data):
+    mp.hold(True)
+    fig=mp.figure()
+    #mp.plot(x[:,0],x[:,1],'bo')
+    #mp.show()   
+    n=min(100,data.shape[0]) 
+    mp.plot(data[:n,0],data[:n,1],'ro')
+    mp.draw()
+    mp.plot(x[:,0],x[:,1],'bo')
+    mp.draw()
+    mp.axes().set_aspect('equal')
+    #pl.quiver(prev_x[:,0],prev_x[:,1],x[:,0]-prev_x[:,0],x[:,1]-prev_x[:,1])
+    #pl.show()
+    mp.show()
+
+
+
 class LatentEnergyFn(object):
-      def __init__(self,sigma=0.01,nx=2,nh=1):
+      def __init__(self,sigma=0.01,nx=2,nh=1,corrupt_factor=1.):
           self.sigma=sigma
           self.nx=nx
           self.nh=nh
@@ -69,8 +120,8 @@ class LatentEnergyFn(object):
           #self.h=self.s[:,nx:(nx+nh)]
           self.x = T.matrix()
           self.h = T.matrix()
-          self.x_n = self.x + gaussian(0.*self.x, 1)*self.sigma
-          self.h_n = self.h + gaussian(0.*self.h, 1)*self.sigma
+          self.x_n = self.x + gaussian(0.*self.x, 1)*self.sigma*corrupt_factor
+          self.h_n = self.h + gaussian(0.*self.h, 1)*self.sigma*corrupt_factor
 
           # subclasss must define 
           #  self.E as a function mapping Theano variable for the state to a Theano variable for the energy
@@ -123,31 +174,33 @@ class GaussianEnergy(LatentEnergyFn):
 
 
 class NeuroEnergy(LatentEnergyFn):
-      def __init__(self, nx, nh, sigma=0.01, inithsigma=0.1, initxsigma=0.1, initwsigma=0.1):
-         super(NeuroEnergy, self).__init__(sigma, nx, nh) 
-         self.w_h = sharedX(np.random.normal(0,inithsigma,nh))
+      def __init__(self, nx, nh, sigma=0.01, inithsigma=1, initxsigma=1, initwsigma=.1, corrupt_factor=1.):
+         super(NeuroEnergy, self).__init__(sigma, nx, nh,corrupt_factor) 
+         self.pp_h = sharedX(np.abs(np.random.normal(0,inithsigma,nh)))
+         self.p_h = softplus(self.pp_h)
          self.b_h = sharedX(np.zeros(nh))
-         self.w_x = sharedX(np.random.normal(0,initxsigma,nx))
+         self.pp_x = sharedX(np.abs(np.random.normal(0,initxsigma,nx)))
+         self.p_x = softplus(self.pp_x)
          self.b_x = sharedX(np.zeros(nx))
-         self.w = sharedX(np.random.normal(0,initwsigma,(nx,nh)))
-         self.params = [self.w, self.b_h, self.b_x]
+         self.w = sharedX(np.random.normal(1.,initwsigma,(nx,nh)))
+         #self.w = sharedX([[3.],[3.]])
+         self.params = [self.w, self.b_h, self.b_x, self.pp_h, self.pp_x]
 
-         self.E = (T.sum(self.x**2) + T.sum(self.h**2))/(2*sigma**2) \
-                  -(T.sum(T.dot(rho(self.x)*rho(self.x), self.w_x)+T.dot(rho(self.h)*rho(self.h), self.w_h) \
-                  -T.sum(rho(self.h)*T.dot(rho(self.x),self.w), axis=1)) \
-                  +T.sum(T.dot(rho(self.h), self.b_h)) + T.sum(T.dot(rho(self.x), self.b_x)))/(2*sigma**2)
+         self.E_fn = lambda x,h,b_h,b_x,w,p_h,p_x: \
+                       0.5*(T.dot(p_x,(x*x).sum(axis=0)) + T.dot(p_h,(h*h).sum(axis=0))) \
+                        -T.sum(rho(h)*T.dot(rho(x),self.w)) \
+                       - T.dot(rho(h), b_h).sum() - T.dot(rho(x), b_x).sum()
+         # /(2*sigma**2) 
 
-         self.E_n = (T.sum(self.x_n**2) + T.sum(self.h_n**2))/(2*sigma**2) \
-                    -(T.sum(T.dot(rho(self.x_n)*rho(self.x_n), self.w_x)+T.dot(rho(self.h_n)*rho(self.h_n), self.w_h) \
-                    -T.sum(rho(self.h_n)*T.dot(rho(self.x_n), self.w),axis=1)) \
-                    +T.sum(T.dot(rho(self.h_n), self.b_h)) + T.sum(T.dot(rho(self.x_n), self.b_x)))/(2*sigma**2)
+         self.E = self.E_fn(self.x,self.h,self.b_h,self.b_x,self.w,self.p_h,self.p_x)
+         self.E_n = self.E_fn(self.x_n,self.h_n,self.b_h,self.b_x,self.w,self.p_h,self.p_x)
 
          self.set_R()
          self.set_R_noise()
          self.monitor = theano.function([], self.params)
 
       def params_monitor(self):
-          return self.monitor()
+          return ["w","b_h","b_x","pp_h","pp_x",self.monitor()]
 
 
 class EMinferencer(object):
@@ -156,31 +209,47 @@ class EMinferencer(object):
 
 
 class LangevinEMinferencer(EMinferencer):
-      def __init__(self, energyfn, epsilon=0.1, n_inference_it=3):
+      def __init__(self, energyfn, epsilon=0.1, n_inference_it=3,map_inference=False,corrupt_factor=1):
           super(LangevinEMinferencer, self).__init__(energyfn)
           self.n_inference_it=n_inference_it
-          self.new_h = self.energyfn.h - epsilon * self.energyfn.sigma**2*self.energyfn.dEdh + gaussian(0.*self.energyfn.h,1)*energyfn.sigma
+          if map_inference:
+             # noise-free update
+             self.new_h = self.energyfn.h - epsilon * self.energyfn.sigma**2*self.energyfn.dEdh 
+          else:
+             self.new_h = self.energyfn.h - epsilon * self.energyfn.sigma**2*self.energyfn.dEdh + gaussian(0.*self.energyfn.h,1)*energyfn.sigma
           self.set_infer = False
 
-      def set_inference(self, x, h, batchsize):
+          self.generate_new_h = self.energyfn.h - 0.5*self.energyfn.sigma**2*self.energyfn.dEdh \
+                                 + gaussian(0.*self.energyfn.h,1)*energyfn.sigma*corrupt_factor
+          self.generate_new_x = self.energyfn.x - 0.5*self.energyfn.sigma**2*self.energyfn.dEdx \
+                                 + gaussian(0.*self.energyfn.x,1)*energyfn.sigma*corrupt_factor
+
+      def set_inference(self, observed_x, generated_x, h, batchsize):
           self.set_infer = True
           self.index = T.iscalar()
           self.update_h = theano.function(
               [self.index], [self.new_h],
               updates = {(h, self.new_h)},
-              givens = {self.energyfn.x : x[self.index*batchsize : (self.index+1)*batchsize], self.energyfn.h : h})
+              givens = {self.energyfn.x : observed_x[self.index*batchsize : (self.index+1)*batchsize], self.energyfn.h : h})
+          self.generate_s = theano.function([], [],
+              updates = {(generated_x, self.generate_new_x),(h, self.generate_new_h)},
+              givens = {self.energyfn.x : generated_x, self.energyfn.h : h})
+
 
       def inference_h(self, ind):
           if not self.set_infer:
              raise ValueError("Call set_inference before doing inference!")
           for n_init in xrange(self.n_inference_it):
-              self.update_h(ind)
+              (h,)=self.update_h(ind)
+              #print "t=",n_init,"h=",h[0]
 
       def reset_h(self, h, h_new):
           if h.get_value().shape != h_new.shape:
              raise ValueError("Shape mismatch when reseting h!")
           h.set_value(h_new)
 
+      def generate_step(self):
+          return self.generate_s()
 
 class EMmodels(object):
       def __init__(self):
@@ -202,11 +271,12 @@ class EMdsm(EMmodels):
           self.n_batch = x.get_value().shape[0]/self.batchsize 
           self.energyfn = energyfn
           self.h = sharedX(np.zeros((self.batchsize, self.energyfn.nh)))
+          self.generated_x = sharedX(np.random.normal(0,0.3,((self.batchsize, self.energyfn.nx))))
 
           # set cost
-          # TODO: do we need determinant in cost?
-          self.cost = T.mean((self.energyfn.Rh_n - self.energyfn.h)**2) \
-                      + T.mean((self.energyfn.Rx_n - self.energyfn.x)**2) + self.energyfn.penality()
+          self.cost = T.sum((self.energyfn.Rh_n - self.energyfn.h)**2) \
+                      + T.sum((self.energyfn.Rx_n - self.energyfn.x)**2) + self.energyfn.penality()
+          self.reconstruction_cost = T.sum((self.energyfn.Rx_n - self.energyfn.x)**2)
 
           # set optimizer
           self.optimizer = optimizer
@@ -214,13 +284,24 @@ class EMdsm(EMmodels):
 
           # set inferencer
           self.inferencer = inferencer
-          self.inferencer.set_inference(self.x, self.h, minibatchsize) 
+          self.inferencer.set_inference(self.x, self.generated_x, self.h, minibatchsize) 
 
           # define parameter update function
           self.index = T.iscalar()
+          self.update_p_names = ["cost","reconstruction_cost","E"]
           self.update_p = theano.function(
-               [self.index], [self.cost],
+               [self.index], [self.cost/minibatchsize,self.reconstruction_cost/minibatchsize,self.energyfn.E/minibatchsize],
                updates = self.optimizer.get_updates(),
+               givens = {self.energyfn.x : x[self.index*self.batchsize : (self.index+1)*self.batchsize], 
+                         self.energyfn.h : self.h})
+          self.costs = theano.function(
+               [self.index], [self.cost/minibatchsize,self.reconstruction_cost/minibatchsize,self.energyfn.E/minibatchsize],
+               givens = {self.energyfn.x : x[self.index*self.batchsize : (self.index+1)*self.batchsize], 
+                         self.energyfn.h : self.h})
+
+          self.dEdh_ = theano.function([self.index],[self.energyfn.dEdh],
+               givens = {self.energyfn.x : x[self.index*self.batchsize : (self.index+1)*self.batchsize], self.energyfn.h : self.h})
+          self.dEdx_ = theano.function([self.index],[self.energyfn.dEdx],
                givens = {self.energyfn.x : x[self.index*self.batchsize : (self.index+1)*self.batchsize], self.energyfn.h : self.h})
 
           # return monitoring values
@@ -233,24 +314,43 @@ class EMdsm(EMmodels):
           self.x = x
 
       def update_params(self, ind):
+          values = []
           for t in xrange(self.n_params_update_it):
-              self.update_p(ind)
+              values.append(self.update_p(ind))
+          return values
 
-      def mainloop(self, max_epoch = 100):
-          for e in xrange(max_epoch):
-              if e % 100 == 0:
-                  print
-                  print "epoch = ", e
-                  print self.energyfn.params_monitor()
-                  #self.print_monitor()
-
+      def mainloop(self, max_epoch = 100, detailed_monitoring=False, burn_in=10):
+         try:
+           for e in xrange(max_epoch):
+              values = []
               for k in xrange(self.n_batch):
-                   self.inferencer.reset_h(self.h, np.zeros((self.batchsize, self.energyfn.nh)))
+                   #self.inferencer.reset_h(self.h, np.zeros((self.batchsize, self.energyfn.nh)))
+                   if detailed_monitoring: print "costs (||dE/ds||^2,||dE/dx||^2,E) before inference:    ",self.costs(k)
                    self.inferencer.inference_h(k)
-                   self.update_params(k)
+                   if detailed_monitoring: print "costs (||dE/ds||^2,||dE/dx||^2,E) after inference:     ",self.costs(k)
+                   values.append(self.update_params(k))
+                   if detailed_monitoring: print "costs (||dE/ds||^2,||dE/dx||^2,E) after params update: ",self.costs(k)
            
+              if e % 100 == 0:
+                  print "epoch = ", e
+                  print self.update_p_names,values[self.n_batch-1],"params=",self.energyfn.params_monitor()
+                  #self.print_monitor()
+                  if e % 500 == 0:
+                     previous_x = self.generated_x.get_value()
+                     minx=np.min(previous_x)
+                     maxx=np.max(previous_x)
+                     self.generated_x.set_value(np.random.uniform(minx,maxx,((self.batchsize, self.energyfn.nx))))
+                     previous_x = self.generated_x.get_value()
+                     for t in range(burn_in):
+                        self.inferencer.generate_step()
+                     new_x=self.generated_x.get_value()
+                     plot_generated_samples(previous_x,new_x,self.x.get_value())
+                  #mp.show()
+         except (KeyboardInterrupt, EOFError):
+            pass
+
       def monitor(self):
-          [w_h, w_x, w] = self.energyfn.params_monitor()
+          [E, w_h, w_x, w] = self.energyfn.params_monitor(self)
 
           nx = self.energyfn.nx
           nh = self.energyfn.nh
@@ -280,20 +380,28 @@ class EMdsm(EMmodels):
 def exp():
     # information about x
     # TOY GAUSSIAN DATA 2D
-    toy_num = 10000
+    toy_num = 1000
     toy_mean = [0, 0]
-    toy_nstd = [[3, 1.5],[1.5, 1]]
+    toy_nstd = [[0.1, .1],[.07, .1]]
     #toy_nstd = [[2]]
-    train_x = sharedX(np.random.multivariate_normal(toy_mean, toy_nstd, toy_num))
-
+    x=np.random.multivariate_normal(toy_mean, toy_nstd, toy_num)
+    maxx=np.max(np.abs(x))
+    train_x = sharedX(x/maxx)
+    #mp.hold(True)
+    #mp.figure(1)
+    x=train_x.get_value()
+    #mp.plot(x[:,0],x[:,1],'bo')
+    #mp.show()
     max_epoch = 1000000
-    batchsize = 256
-    nx, nh = 2, 1
-
-    #energyfn = GaussianEnergy(nx, nh, sigma=0.005)
-    energyfn = NeuroEnergy(nx, nh, sigma=0.001)
+    batchsize = 100
+    nx, nh = 2, 3
+    sigma = 1
+    #energyfn = GaussianEnergy(nx, nh, sigma=sigma)
+    energyfn = NeuroEnergy(nx, nh, sigma=sigma, corrupt_factor=0.1)
     opt = adam()
-    inferencer = LangevinEMinferencer(energyfn, epsilon=0.56, n_inference_it=3)
+    #opt = sgd(.1)
+    inferencer = LangevinEMinferencer(energyfn, epsilon=0.25/(sigma*sigma), 
+                                      n_inference_it=10, map_inference=True, corrupt_factor=0.05)
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
     model.mainloop(max_epoch)
 
@@ -354,6 +462,7 @@ def plot_energy():
     plt.show() 
     plt.savefig('test.png')
 
+    
 if __name__ == "__main__":
     plot_energy()
 
