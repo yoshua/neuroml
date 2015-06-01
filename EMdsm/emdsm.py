@@ -239,9 +239,9 @@ class LangevinEMinferencer(EMinferencer):
       def inference_h(self, ind):
           if not self.set_infer:
              raise ValueError("Call set_inference before doing inference!")
-          for n_init in xrange(self.n_inference_it):
-              (h,)=self.update_h(ind)
-              #print "t=",n_init,"h=",h[0]
+          #for n_init in xrange(self.n_inference_it):
+          (h,)=self.update_h(ind)
+           #print "t=",n_init,"h=",h[0]
 
       def reset_h(self, h, h_new):
           if h.get_value().shape != h_new.shape:
