@@ -182,7 +182,7 @@ class NeuroEnergy(LatentEnergyFn):
          self.pp_x = sharedX(np.abs(np.random.normal(0,initxsigma,nx)))
          self.p_x = softplus(self.pp_x)
          self.b_x = sharedX(np.zeros(nx))
-         self.w = sharedX(np.random.normal(1.,initwsigma,(nx,nh)))
+         self.w = sharedX(np.random.normal(1.,initwsigma/max(nx,nh),(nx,nh)))
          #self.w = sharedX([[3.],[3.]])
          self.params = [self.w, self.b_h, self.b_x, self.pp_h, self.pp_x]
 
@@ -320,17 +320,29 @@ class EMdsm(EMmodels):
               values.append(v)
           return v,values
 
-      def mainloop(self, max_epoch = 100, detailed_monitoring=False, burn_in=10):
+      def mainloop(self, max_epoch = 100, detailed_monitoring=False, burn_in=10, update_params_during_inference=0):
          try:
            for e in xrange(max_epoch):
               values = []
               costs = np.zeros(len(self.update_p_names))
               for k in xrange(self.n_batch):
+                   # initial h is the state from the previous minibatch, which is probably better than random or 0
                    #self.inferencer.reset_h(self.h, np.zeros((self.batchsize, self.energyfn.nh)))
-                   if detailed_monitoring: print "costs (||dE/ds||^2,||dE/dx||^2,E) before inference:    ",self.costs(k)
-                   self.inferencer.inference_h(k)
-                   if detailed_monitoring: print "costs (||dE/ds||^2,||dE/dx||^2,E) after inference:     ",self.costs(k)
-                   (last,list) = self.update_params(k)
+                   if detailed_monitoring: 
+                      print "costs (||dE/ds||^2,||dE/dx||^2,E) before inference:    ",self.costs(k)
+                      print self.h.get_value()[0,:]
+                      print "params=",self.energyfn.params_monitor()
+                   for t in xrange(self.inferencer.n_inference_it):
+                       self.inferencer.inference_h(k)
+                       if update_params_during_inference>0 and t%update_params_during_inference == update_params_during_inference-1: #and t>self.inferencer.n_inference_it/2 
+                          (last,list)=self.update_params(k)
+                          if detailed_monitoring: 
+                             print "params=",self.energyfn.params_monitor()
+                   if detailed_monitoring: 
+                      print "costs (||dE/ds||^2,||dE/dx||^2,E) after inference:     ",self.costs(k)
+                      print self.h.get_value()[0,:]
+                   if update_params_during_inference==0:
+                      (last,list) = self.update_params(k)
                    costs += last
                    values.append(list)
                    if detailed_monitoring: print "costs (||dE/ds||^2,||dE/dx||^2,E) after params update: ",self.costs(k)
@@ -441,11 +453,11 @@ def exp2():
     #energyfn = GaussianEnergy(nx, nh, sigma=sigma)
     energyfn = NeuroEnergy(nx, nh, sigma=sigma, corrupt_factor=0.01)
     #opt = adam()
-    opt = sgd(.1)
+    opt = sgd(.001)
     inferencer = LangevinEMinferencer(energyfn, epsilon=0.25/(sigma*sigma), 
-                                      n_inference_it=10, map_inference=True, corrupt_factor=0.01)
+                                      n_inference_it=12, map_inference=True, corrupt_factor=0.01)
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
-    model.mainloop(max_epoch)
+    model.mainloop(max_epoch,update_params_during_inference=4,detailed_monitoring=False)
 
 def plot_energy():
     # information about x
