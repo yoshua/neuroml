@@ -408,20 +408,22 @@ def exp():
 def plot_energy():
     # information about x
     # TOY GAUSSIAN DATA 2D
-    toy_num = 10000
+    toy_num = 1000
     toy_mean = [0, 0]
     toy_nstd = [[3, 1.5],[1.5, 1]]
     #toy_nstd = [[2]]
-    train_x = sharedX(np.random.multivariate_normal(toy_mean, toy_nstd, toy_num))
+    x=np.random.multivariate_normal(toy_mean, toy_nstd, toy_num)
+    maxx=np.max(np.abs(x))
+    train_x = sharedX(x/maxx)
 
-    max_epoch = 100
+    max_epoch = 1000
     batchsize = 256
-    nx, nh = 2, 1
-
+    nx, nh = 2, 3
+    sigma = 1
     #energyfn = GaussianEnergy(nx, nh, sigma=0.005)
-    energyfn = NeuroEnergy(nx, nh, sigma=0.001)
+    energyfn = NeuroEnergy(nx, nh, sigma=sigma,corrupt_factor=0.01)
     opt = adam()
-    inferencer = LangevinEMinferencer(energyfn, epsilon=0.56, n_inference_it=3)
+    inferencer = LangevinEMinferencer(energyfn, epsilon=0.25/(sigma*sigma), n_inference_it=3,map_inference=True, corrupt_factor=0.1)
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
     model.mainloop(max_epoch)
 
@@ -464,5 +466,6 @@ def plot_energy():
 
     
 if __name__ == "__main__":
-    exp() 
+    #exp() 
+    plot_energy()
 
