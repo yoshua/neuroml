@@ -223,6 +223,14 @@ class EMdsm(EMmodels):
                updates = self.optimizer.get_updates(),
                givens = {self.energyfn.x : x[self.index*self.batchsize : (self.index+1)*self.batchsize], self.energyfn.h : self.h})
 
+          # return monitoring values
+          # e.g. monitoring "energy"
+          self.monitor_values = theano.function(
+               [self.index], [self.energyfn.E],
+               givens = {self.energyfn.x : x[self.index*self.batchsize : (self.index+1)*self.batchsize], self.energyfn.h : self.h})
+
+      def reset_x(self, x):
+          self.x = x
 
       def update_params(self, ind):
           for t in xrange(self.n_params_update_it):
@@ -289,7 +297,63 @@ def exp():
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
     model.mainloop(max_epoch)
 
-    
+def plot_energy():
+    # information about x
+    # TOY GAUSSIAN DATA 2D
+    toy_num = 10000
+    toy_mean = [0, 0]
+    toy_nstd = [[3, 1.5],[1.5, 1]]
+    #toy_nstd = [[2]]
+    train_x = sharedX(np.random.multivariate_normal(toy_mean, toy_nstd, toy_num))
+
+    max_epoch = 100
+    batchsize = 256
+    nx, nh = 2, 1
+
+    #energyfn = GaussianEnergy(nx, nh, sigma=0.005)
+    energyfn = NeuroEnergy(nx, nh, sigma=0.001)
+    opt = adam()
+    inferencer = LangevinEMinferencer(energyfn, epsilon=0.56, n_inference_it=3)
+    model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
+    model.mainloop(max_epoch)
+
+
+    # grid data
+    x1 = np.arange(-3, 3, 0.1)
+    x2 = np.arange(-3, 3, 0.1)
+    x1_, x2_ = np.meshgrid(x1, x2)
+    x1_ = x1_.reshape((x1_.shape[0]*x1_.shape[1]))
+    x2_ = x2_.reshape((x2_.shape[0]*x2_.shape[1]))
+    x_grid = sharedX(np.concatenate((x1_.reshape(x1_.shape[0], 1), x2_.reshape(x2_.shape[0], 1)), axis=1))
+    num_grid = x1_.shape[0]   
+ 
+    inferencer_plot = LangevinEMinferencer(energyfn, epsilon=0.56, n_inference_it=3)
+    model_plot = EMdsm(x_grid, 1, energyfn, opt, inferencer_plot)
+    E = []
+    for ind in xrange(num_grid):
+        model_plot.inferencer.reset_h(model_plot.h, np.zeros((model_plot.batchsize, model_plot.energyfn.nh)))
+        model_plot.inferencer.inference_h(ind)
+        E.append(model_plot.monitor_values(ind))
+
+    E_ = np.asarray(E)
+
+    # plot
+    from mpl_toolkits.mplot3d import Axes3D
+    from matplotlib import cm
+    from matplotlib.ticker import LinearLocator, FormatStrFormatter
+    import matplotlib.pyplot as plt
+
+    fig = plt.figure()
+    ax = fig.gca(projection='3d')
+    surf = ax.plot_surface(x1_, x_2, E_, rstride=1, cstride=1, cmap=cm.coolwarm,
+            linewidth=0, antialiased=False)
+    ax.set_zlim(-1.01, 1.01)
+    ax.zaxis.set_major_locator(LinearLocator(10))
+    ax.zaxis.set_major_formatter(FormatStrFormatter('%.02f'))
+    fig.colorbar(surf, shrink=0.5, aspect=5)
+    plt.show() 
+    plt.savefig('test.png')
+
 if __name__ == "__main__":
-    exp()
+    plot_energy()
 
