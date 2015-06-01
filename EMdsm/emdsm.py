@@ -316,26 +316,31 @@ class EMdsm(EMmodels):
       def update_params(self, ind):
           values = []
           for t in xrange(self.n_params_update_it):
-              values.append(self.update_p(ind))
-          return values
+              v = self.update_p(ind)
+              values.append(v)
+          return v,values
 
       def mainloop(self, max_epoch = 100, detailed_monitoring=False, burn_in=10):
          try:
            for e in xrange(max_epoch):
               values = []
+              costs = np.zeros(len(self.update_p_names))
               for k in xrange(self.n_batch):
                    #self.inferencer.reset_h(self.h, np.zeros((self.batchsize, self.energyfn.nh)))
                    if detailed_monitoring: print "costs (||dE/ds||^2,||dE/dx||^2,E) before inference:    ",self.costs(k)
                    self.inferencer.inference_h(k)
                    if detailed_monitoring: print "costs (||dE/ds||^2,||dE/dx||^2,E) after inference:     ",self.costs(k)
-                   values.append(self.update_params(k))
+                   (last,list) = self.update_params(k)
+                   costs += last
+                   values.append(list)
                    if detailed_monitoring: print "costs (||dE/ds||^2,||dE/dx||^2,E) after params update: ",self.costs(k)
-           
+              costs *= 1./self.n_batch
               if e % 100 == 0:
                   print "epoch = ", e
-                  print self.update_p_names,values[self.n_batch-1],"params=",self.energyfn.params_monitor()
+                  #print self.update_p_names,costs,"params=",self.energyfn.params_monitor()
+                  print self.update_p_names,costs
                   #self.print_monitor()
-                  if e % 500 == 0:
+                  if e % 1000 == 0:
                      previous_x = self.generated_x.get_value()
                      minx=np.min(previous_x)
                      maxx=np.max(previous_x)
@@ -376,8 +381,17 @@ class EMdsm(EMmodels):
 #          print "model params = "
 #          print params
 
+def gaussian_mixture_sample(means,covariances,weights,n):
+    means = np.array(means)
+    ncomp=means.shape[0]
+    d=means.shape[1]
+    x=np.zeros((n,d))
+    components = np.argmax(np.random.multinomial(1,weights,n),axis=1)
+    for i in range(n):
+        x[i,:] = np.random.multivariate_normal(means[components[i]],covariances[components[i]],1)
+    return x
 
-def exp():
+def exp1():
     # information about x
     # TOY GAUSSIAN DATA 2D
     toy_num = 1000
@@ -392,7 +406,7 @@ def exp():
     x=train_x.get_value()
     #mp.plot(x[:,0],x[:,1],'bo')
     #mp.show()
-    max_epoch = 1000000
+    max_epoch = 10000
     batchsize = 100
     nx, nh = 2, 3
     sigma = 1
@@ -402,6 +416,34 @@ def exp():
     #opt = sgd(.1)
     inferencer = LangevinEMinferencer(energyfn, epsilon=0.25/(sigma*sigma), 
                                       n_inference_it=10, map_inference=True, corrupt_factor=0.05)
+    model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
+    model.mainloop(max_epoch)
+
+def exp2():
+    # information about x
+    # gaussian mixture in 2D
+    n_examples = 1000
+    means = [[-1.5, 0],[0,4],[0,0]]
+    covs = [[[0.02, -.3],[.11, -.3]],[[1.01,.99],[.99,1.01]],[[1.05,-.95],[-.95,1.05]]]
+    weights = [.15,.5,.35]
+    x=gaussian_mixture_sample(means,covs,weights,n_examples)
+    maxx=np.max(np.abs(x))
+    train_x = sharedX(x/maxx)
+    #mp.hold(True)
+    #mp.figure(1)
+    x=train_x.get_value()
+    #mp.plot(x[:,0],x[:,1],'bo')
+    #mp.show()
+    max_epoch = 10000
+    batchsize = 100
+    nx, nh = 2, 10
+    sigma = 1
+    #energyfn = GaussianEnergy(nx, nh, sigma=sigma)
+    energyfn = NeuroEnergy(nx, nh, sigma=sigma, corrupt_factor=0.01)
+    #opt = adam()
+    opt = sgd(.1)
+    inferencer = LangevinEMinferencer(energyfn, epsilon=0.25/(sigma*sigma), 
+                                      n_inference_it=10, map_inference=True, corrupt_factor=0.01)
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
     model.mainloop(max_epoch)
 
@@ -466,6 +508,6 @@ def plot_energy():
 
     
 if __name__ == "__main__":
-    #exp() 
-    plot_energy()
+    exp2() 
+    #plot_energy()
 
