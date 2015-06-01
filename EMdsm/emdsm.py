@@ -427,13 +427,14 @@ def plot_energy():
 
 
     # grid data
-    x1 = np.arange(-3, 3, 0.1)
-    x2 = np.arange(-3, 3, 0.1)
+    x1 = np.arange(-3, 3, 0.2)
+    x2 = np.arange(-3, 3, 0.2)
     x1_, x2_ = np.meshgrid(x1, x2)
-    x1_ = x1_.reshape((x1_.shape[0]*x1_.shape[1]))
-    x2_ = x2_.reshape((x2_.shape[0]*x2_.shape[1]))
-    x_grid = sharedX(np.concatenate((x1_.reshape(x1_.shape[0], 1), x2_.reshape(x2_.shape[0], 1)), axis=1))
-    num_grid = x1_.shape[0]   
+    grid_shape = x1_.shape
+    x1__ = x1_.reshape((x1_.shape[0]*x1_.shape[1]))
+    x2__ = x2_.reshape((x2_.shape[0]*x2_.shape[1]))
+    x_grid = sharedX(np.concatenate((x1__.reshape(x1__.shape[0], 1), x2__.reshape(x2__.shape[0], 1)), axis=1))
+    num_grid = x1__.shape[0]   
  
     inferencer_plot = LangevinEMinferencer(energyfn, epsilon=0.56, n_inference_it=3)
     model_plot = EMdsm(x_grid, 1, energyfn, opt, inferencer_plot)
@@ -443,8 +444,9 @@ def plot_energy():
         model_plot.inferencer.inference_h(ind)
         E.append(model_plot.monitor_values(ind))
 
-    E_ = np.asarray(E)
-
+    E_ = np.exp(-np.asarray(E).reshape(grid_shape))
+    pdb.set_trace()
+    #E_ = np.sqrt(x1_**2 + x2_**2)
     # plot
     from mpl_toolkits.mplot3d import Axes3D
     from matplotlib import cm
@@ -453,9 +455,9 @@ def plot_energy():
 
     fig = plt.figure()
     ax = fig.gca(projection='3d')
-    surf = ax.plot_surface(x1_, x_2, E_, rstride=1, cstride=1, cmap=cm.coolwarm,
+    surf = ax.plot_surface(x1_, x2_, E_, rstride=1, cstride=1, cmap=cm.coolwarm,
             linewidth=0, antialiased=False)
-    ax.set_zlim(-1.01, 1.01)
+    ax.set_zlim(-1., 4.)
     ax.zaxis.set_major_locator(LinearLocator(10))
     ax.zaxis.set_major_formatter(FormatStrFormatter('%.02f'))
     fig.colorbar(surf, shrink=0.5, aspect=5)
@@ -464,5 +466,5 @@ def plot_energy():
 
     
 if __name__ == "__main__":
-    exp() 
+    plot_energy() 
 
