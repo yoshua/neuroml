@@ -447,8 +447,7 @@ def plot_energy():
         E.append(model_plot.monitor_values(ind))
 
     E_ = np.exp(-np.asarray(E).reshape(grid_shape))
-    pdb.set_trace()
-    #E_ = np.sqrt(x1_**2 + x2_**2)
+
     # plot
     from mpl_toolkits.mplot3d import Axes3D
     from matplotlib import cm
