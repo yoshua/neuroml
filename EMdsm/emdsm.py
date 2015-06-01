@@ -93,13 +93,17 @@ class sgd(object):
           return ()
 
 
-def plot_generated_samples(prev_x,x):
+def plot_generated_samples(prev_x,x,data):
     mp.hold(True)
-    #mp.figure()
+    fig=mp.figure()
     #mp.plot(x[:,0],x[:,1],'bo')
-    #mp.show()    
+    #mp.show()   
+    n=min(100,data.shape[0]) 
+    mp.plot(data[:n,0],data[:n,1],'ro')
+    mp.draw()
     mp.plot(x[:,0],x[:,1],'bo')
     mp.draw()
+    mp.axes().set_aspect('equal')
     #pl.quiver(prev_x[:,0],prev_x[:,1],x[:,0]-prev_x[:,0],x[:,1]-prev_x[:,1])
     #pl.show()
     mp.show()
@@ -306,7 +310,7 @@ class EMdsm(EMmodels):
               values.append(self.update_p(ind))
           return values
 
-      def mainloop(self, max_epoch = 100, detailed_monitoring=False, burn_in=15):
+      def mainloop(self, max_epoch = 100, detailed_monitoring=False, burn_in=10):
          try:
            for e in xrange(max_epoch):
               values = []
@@ -331,7 +335,7 @@ class EMdsm(EMmodels):
                      for t in range(burn_in):
                         self.inferencer.generate_step()
                      new_x=self.generated_x.get_value()
-                     plot_generated_samples(previous_x,new_x)
+                     plot_generated_samples(previous_x,new_x,self.x.get_value())
                   #mp.show()
          except (KeyboardInterrupt, EOFError):
             pass
@@ -369,27 +373,26 @@ def exp():
     # TOY GAUSSIAN DATA 2D
     toy_num = 1000
     toy_mean = [0, 0]
-    toy_nstd = [[0.1, .5],[.05, .5]]
+    toy_nstd = [[0.1, .1],[.07, .1]]
     #toy_nstd = [[2]]
     x=np.random.multivariate_normal(toy_mean, toy_nstd, toy_num)
     maxx=np.max(np.abs(x))
     train_x = sharedX(x/maxx)
-    mp.hold(True)
-    mp.figure(1)
+    #mp.hold(True)
+    #mp.figure(1)
     x=train_x.get_value()
-    mp.plot(x[:,0],x[:,1],'bo')
-    mp.draw()
-    mp.figure(2)
+    #mp.plot(x[:,0],x[:,1],'bo')
+    #mp.show()
     max_epoch = 1000000
-    batchsize = 1000
-    nx, nh = 2, 1
+    batchsize = 100
+    nx, nh = 2, 3
     sigma = 1
     #energyfn = GaussianEnergy(nx, nh, sigma=sigma)
-    energyfn = NeuroEnergy(nx, nh, sigma=sigma, corrupt_factor=0.01)
+    energyfn = NeuroEnergy(nx, nh, sigma=sigma, corrupt_factor=0.1)
     opt = adam()
     #opt = sgd(.1)
     inferencer = LangevinEMinferencer(energyfn, epsilon=0.25/(sigma*sigma), 
-                                      n_inference_it=10, map_inference=True, corrupt_factor=.01)
+                                      n_inference_it=10, map_inference=True, corrupt_factor=0.05)
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
     model.mainloop(max_epoch)
     #mp.show()
