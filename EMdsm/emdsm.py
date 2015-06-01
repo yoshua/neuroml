@@ -98,7 +98,7 @@ def plot_generated_samples(prev_x,x,data):
     fig=mp.figure()
     #mp.plot(x[:,0],x[:,1],'bo')
     #mp.show()   
-    n=min(100,data.shape[0]) 
+    n=min(500,data.shape[0]) 
     mp.plot(data[:n,0],data[:n,1],'ro')
     mp.draw()
     mp.plot(x[:,0],x[:,1],'bo')
@@ -380,9 +380,9 @@ class EMdsm(EMmodels):
 def exp():
     # information about x
     # TOY GAUSSIAN DATA 2D
-    toy_num = 1000
+    toy_num = 10000
     toy_mean = [0, 0]
-    toy_nstd = [[0.1, .1],[.07, .1]]
+    toy_nstd = [[3, 2],[2, 1]]
     #toy_nstd = [[2]]
     x=np.random.multivariate_normal(toy_mean, toy_nstd, toy_num)
     maxx=np.max(np.abs(x))
@@ -393,17 +393,17 @@ def exp():
     #mp.plot(x[:,0],x[:,1],'bo')
     #mp.show()
     max_epoch = 1000000
-    batchsize = 100
-    nx, nh = 2, 3
+    batchsize = 500
+    nx, nh = 2, 20
     sigma = 1
     #energyfn = GaussianEnergy(nx, nh, sigma=sigma)
-    energyfn = NeuroEnergy(nx, nh, sigma=sigma, corrupt_factor=0.1)
-    opt = adam()
+    energyfn = NeuroEnergy(nx, nh, sigma=sigma, corrupt_factor=0.05)
+    opt = sgd(0.00001)
     #opt = sgd(.1)
     inferencer = LangevinEMinferencer(energyfn, epsilon=0.25/(sigma*sigma), 
                                       n_inference_it=10, map_inference=True, corrupt_factor=0.05)
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
-    model.mainloop(max_epoch)
+    model.mainloop(max_epoch, burn_in = 10)
 
 def plot_energy():
     # information about x
@@ -429,8 +429,8 @@ def plot_energy():
 
 
     # grid data
-    x1 = np.arange(-3, 3, 0.2)
-    x2 = np.arange(-3, 3, 0.2)
+    x1 = np.arange(-3, 3, 0.1)
+    x2 = np.arange(-3, 3, 0.1)
     x1_, x2_ = np.meshgrid(x1, x2)
     grid_shape = x1_.shape
     x1__ = x1_.reshape((x1_.shape[0]*x1_.shape[1]))
@@ -446,7 +446,7 @@ def plot_energy():
         model_plot.inferencer.inference_h(ind)
         E.append(model_plot.monitor_values(ind))
 
-    E_ = np.exp(-np.asarray(E).reshape(grid_shape))
+    E_ = np.asarray(E).reshape(grid_shape)
 
     # plot
     from mpl_toolkits.mplot3d import Axes3D
@@ -467,6 +467,6 @@ def plot_energy():
 
     
 if __name__ == "__main__":
-    #exp() 
+    exp() 
     plot_energy()
 
