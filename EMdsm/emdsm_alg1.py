@@ -165,7 +165,7 @@ class LatentEnergyFn(object):
           self.x_n = T.matrix()
           self.h = T.matrix()
           self.h_n = T.matrix()
-          self.delta_factor=delta_factor
+          self.delta_factor = np.asarray(delta_factor, dtype=theano.config.floatX)
           self.corrupt_factor=corrupt_factor
           # subclasss must define 
           #  self.E as a function mapping Theano variable for the state to a Theano variable for the energy
@@ -402,7 +402,7 @@ class EMdsm(EMmodels):
                      previous_x = self.generated_x.get_value()
                      minx=np.min(previous_x)
                      maxx=np.max(previous_x)
-                     self.generated_x.set_value(np.random.uniform(minx,maxx,((self.batchsize, self.energyfn.nx))))
+                     self.generated_x.set_value(np.random.uniform(minx,maxx,((self.batchsize, self.energyfn.nx))).astype(theano.config.floatX))
                      previous_x = self.generated_x.get_value()
                      for t in range(burn_in):
                         self.inferencer.generate_step()
