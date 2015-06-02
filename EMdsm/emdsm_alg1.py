@@ -121,7 +121,6 @@ class LatentEnergyFn(object):
           self.h_n = T.matrix()
           self.delta_factor=delta_factor
           self.corrupt_factor=corrupt_factor
-          
           # subclasss must define 
           #  self.E as a function mapping Theano variable for the state to a Theano variable for the energy
           #  self.param as a Theano shared variable for the parameters
@@ -137,9 +136,6 @@ class LatentEnergyFn(object):
           self.Rx_n = self.x_n - self.sigma**2 * self.dEdx_n
           self.delta_x = self.Rx_n - self.x
           self.delta_h = self.Rh_n - self.h
-          self.new_x = self.x_n + self.delta_factor*self.delta_x
-          self.new_h = self.h_n + self.delta_factor*self.delta_h
-          # or is it without the noise?
           self.new_x = self.x + self.delta_factor*self.delta_x
           self.new_h = self.h + self.delta_factor*self.delta_h
           self.new_x_n = self.new_x + gaussian(0.*self.x, 1)*self.sigma*self.corrupt_factor
@@ -188,7 +184,8 @@ class NeuroEnergy(LatentEnergyFn):
          self.pp_x = sharedX(np.abs(np.random.normal(0,initxsigma,nx)))
          self.p_x = softplus(self.pp_x)
          self.b_x = sharedX(np.zeros(nx))
-         self.w = sharedX(np.random.normal(1.,initwsigma/max(nx,nh),(nx,nh)))
+         r = initwsigma/max(nx,nh)
+         self.w = sharedX(np.random.uniform(-r,r,(nx,nh)))
          #self.w = sharedX([[3.],[3.]])
          self.params = [self.w, self.b_h, self.b_x, self.pp_h, self.pp_x]
 
@@ -238,9 +235,9 @@ class LangevinEMinferencer(EMinferencer):
       def inference_h(self, ind):
           if not self.set_infer:
              raise ValueError("Call set_inference before doing inference!")
-          for n_init in xrange(self.n_inference_it):
-              (h,)=self.update_h(ind)
-              #print "t=",n_init,"h=",h[0]
+          #for n_init in xrange(self.n_inference_it):
+          (h,)=self.update_h(ind)
+          #print "t=",n_init,"h=",h[0]
 
       def reset_h(self, h, h_new):
           if h.get_value().shape != h_new.shape:
@@ -451,15 +448,15 @@ def exp2():
     max_epoch = 10000
     batchsize = 100
     nx, nh = 2, 10
-    sigma = 0.1
+    sigma = 1
     #energyfn = GaussianEnergy(nx, nh, sigma=sigma)
-    energyfn = NeuroEnergy(nx, nh, sigma=sigma, corrupt_factor=0.1)
-    #opt = adam()
-    opt = sgd(.001)
+    energyfn = NeuroEnergy(nx, nh, sigma=sigma, corrupt_factor=1)
+    opt = adam()
+    #opt = sgd(.001)
     inferencer = LangevinEMinferencer(energyfn, epsilon=0.25/(sigma*sigma), 
-                                      n_inference_it=12)
+                                      n_inference_it=1)
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
-    model.mainloop(max_epoch,update_params_during_inference=4,detailed_monitoring=False)
+    model.mainloop(max_epoch,update_params_during_inference=0,detailed_monitoring=True, burn_in=5)
 
 def plot_energy():
     # information about x
