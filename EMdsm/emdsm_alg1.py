@@ -466,11 +466,11 @@ def exp2():
     #energyfn = GaussianEnergy(nx, nh, sigma=sigma)
     energyfn = NeuroEnergy(nx, nh, sigma=sigma, corrupt_factor=0.1)
     #opt = adam()
-    opt = sgd(.001)
+    opt = sgd(.0001)
     inferencer = LangevinEMinferencer(energyfn, epsilon=0.25/(sigma*sigma), 
                                       n_inference_it=1)
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
-    model.mainloop(max_epoch,update_params_during_inference=0,detailed_monitoring=False, burn_in=10, plot_every=2500)
+    model.mainloop(max_epoch,update_params_during_inference=0,detailed_monitoring=False, burn_in=10, plot_every=5000)
 
 def plot_energy():
     # information about x
