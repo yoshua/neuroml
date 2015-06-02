@@ -219,7 +219,7 @@ class EMinferencer(object):
 
 
 class LangevinEMinferencer(EMinferencer):
-      def __init__(self, energyfn, epsilon=0.1, n_inference_it=3): # ,corrupt_factor=1):
+      def __init__(self, energyfn, n_inference_it=3): #  epsilon=0.1): # ,corrupt_factor=1):
           super(LangevinEMinferencer, self).__init__(energyfn)
           self.n_inference_it=n_inference_it
 
@@ -243,8 +243,8 @@ class LangevinEMinferencer(EMinferencer):
       def inference_h(self, ind):
           if not self.set_infer:
              raise ValueError("Call set_inference before doing inference!")
-          #for n_init in xrange(self.n_inference_it):
-          (h,)=self.update_h(ind)
+          for n_init in xrange(self.n_inference_it):
+             (h,)=self.update_h(ind)
           #print "t=",n_init,"h=",h[0]
 
       def reset_h(self, h, h_new):
@@ -340,7 +340,7 @@ class EMdsm(EMmodels):
                       print self.h.get_value()[0,:]
                       print "params=",self.energyfn.params_monitor()
                    #pdb.set_trace()
-                   for t in xrange(self.inferencer.n_inference_it):
+                   for t in xrange(burn_in):
                        self.inferencer.inference_h(k)
                        if update_params_during_inference>0 and t%update_params_during_inference == update_params_during_inference-1: #and t>self.inferencer.n_inference_it/2 
                           (last,list)=self.update_params(k)
@@ -355,28 +355,25 @@ class EMdsm(EMmodels):
                    values.append(list)
                    if detailed_monitoring: print "costs (||dE/ds||^2,||dE/dx||^2,E) after params update: ",self.costs(k)
               costs *= 1./self.n_batch
-              if e % 100 == 0:
+              if e % 100 == 0 or e==max_epoch-1:
                   print "epoch = ", e
                   #print self.update_p_names,costs,"params=",self.energyfn.params_monitor()
                   print self.update_p_names,costs
                   #self.print_monitor()
-                  if e % plot_every == 0:
+                  if plot_every>0 and (e % plot_every == 0 or e==max_epoch-1):
                      previous_x = self.generated_x.get_value()
                      minx=np.min(previous_x)
                      maxx=np.max(previous_x)
                      self.generated_x.set_value(np.random.uniform(minx,maxx,((self.batchsize, self.energyfn.nx))))
+                     self.h.set_value(np.random.uniform(-0.5,0.5,((self.batchsize, self.energyfn.nh))))
                      previous_x = self.generated_x.get_value()
-                     for t in range(burn_in):
+                     for t in range(burn_in*3):
                         self.inferencer.generate_step()
                      new_x=self.generated_x.get_value()
                      plot_generated_samples(previous_x,new_x,self.x.get_value())
-                  #mp.show()
+
          except (KeyboardInterrupt, EOFError):
             pass
-         for t in range(burn_in):
-            self.inferencer.generate_step()
-         new_x=self.generated_x.get_value()
-         plot_generated_samples(previous_x,new_x,self.x.get_value())
 
       def monitor(self):
           [E, w_h, w_x, w] = self.energyfn.params_monitor(self)
@@ -446,6 +443,14 @@ def exp1():
 def exp2():
     # information about x
     # gaussian mixture in 2D
+    plotting = True
+
+    if plotting:
+       mp.ion()
+       plot_every=5000
+    else:
+       plot_every=0
+
     n_examples = 1000
     means = [[-1.5, 0],[0,4],[0,0]]
     covs = [[[0.02, -.3],[.11, -.3]],[[1.01,.99],[.99,1.01]],[[1.05,-.95],[-.95,1.05]]]
@@ -458,7 +463,7 @@ def exp2():
     x=train_x.get_value()
     #mp.plot(x[:,0],x[:,1],'bo')
     #mp.show()
-    max_epoch = 20000
+    max_epoch = 30000
     batchsize = 100
     nx, nh = 2, 10
     sigma = 0.1
@@ -466,11 +471,11 @@ def exp2():
     #energyfn = GaussianEnergy(nx, nh, sigma=sigma)
     energyfn = NeuroEnergy(nx, nh, sigma=sigma, corrupt_factor=0.1)
     #opt = adam()
-    opt = sgd(.0001)
+    opt = sgd(0.0001)
     inferencer = LangevinEMinferencer(energyfn, epsilon=0.25/(sigma*sigma), 
                                       n_inference_it=1)
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
-    model.mainloop(max_epoch,update_params_during_inference=0,detailed_monitoring=False, burn_in=10, plot_every=5000)
+    model.mainloop(max_epoch,update_params_during_inference=3,detailed_monitoring=False, burn_in=10, plot_every=plot_every)
 
 def plot_energy():
     # information about x
