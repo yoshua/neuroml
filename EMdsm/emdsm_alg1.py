@@ -277,6 +277,7 @@ class LangevinEMinferencer(EMinferencer):
           if not self.set_infer:
              raise ValueError("Call set_inference before doing inference!")
           for n_init in xrange(self.n_inference_it):
+             if debug_printing: print "within inference loop: ",n_init
              (h,)=self.update_h(ind)
           #print "t=",n_init,"h=",h[0]
 
@@ -367,11 +368,13 @@ class EMdsm(EMmodels):
                    # initial h is the state from the previous minibatch, which is probably better than random or 0
                    #self.inferencer.reset_h(self.h, np.zeros((self.batchsize, self.energyfn.nh)))
                    if detailed_monitoring: 
+                      print "x=",self.x.get_value()[0,:]
+                      print "h=",self.h.get_value()[0,:]
                       print "costs (||dE/ds||^2,||dE/dx||^2,E) before inference:    ",self.costs(k)
-                      print self.h.get_value()[0,:]
                       print "params=",self.energyfn.params_monitor()
                    #pdb.set_trace()
                    for t in xrange(burn_in):
+                       if detailed_monitoring: print "t=",t
                        self.inferencer.inference_h(k,self.x,self.h)
                        if update_params_during_inference>0 and t%update_params_during_inference == update_params_during_inference-1: #and t>self.inferencer.n_inference_it/2 
                           (last,list)=self.update_params(k)
@@ -379,23 +382,21 @@ class EMdsm(EMmodels):
                              print "params=",self.energyfn.params_monitor()
                    if detailed_monitoring: 
                       print "costs (||dE/ds||^2,||dE/dx||^2,E) after inference:     ",self.costs(k)
-                      print self.h.get_value()[0,:]
+                      print "h=",self.h.get_value()[0,:]
                    if update_params_during_inference==0:
+                      if detailed_monitoring: print "update params"
                       (last,list) = self.update_params(k)
                    costs += last
                    values.append(list)
                    if detailed_monitoring: print "costs (||dE/ds||^2,||dE/dx||^2,E) after params update: ",self.costs(k)
               costs *= 1./self.n_batch
-              if e % 100 == 0 or e==max_epoch-1:
+              if e % min(plot_every,100) == 0 or e==max_epoch-1:
                   print "epoch = ", e
                   #print self.update_p_names,costs,"params=",self.energyfn.params_monitor()
                   print self.update_p_names,costs
                   #self.print_monitor()
                   if plot_every>0 and (e % plot_every == 0 or e==max_epoch-1):
-                     previous_x = self.generated_x.get_value()
-                     minx=np.min(previous_x)
-                     maxx=np.max(previous_x)
-                     self.generated_x.set_value(np.random.uniform(minx,maxx,((self.batchsize, self.energyfn.nx)))) # .astype(theano.config.floatX)
+                     self.generated_x.set_value(np.random.uniform(-0.5,0.5,((self.batchsize, self.energyfn.nx)))) # .astype(theano.config.floatX)
                      self.h.set_value(np.random.uniform(-0.5,0.5,((self.batchsize, self.energyfn.nh)))) # .astype(theano.config.floatX)
                      previous_x = self.generated_x.get_value()
                      for t in range(burn_in*3):
@@ -477,7 +478,7 @@ def exp2():
 
     if plotting:
        mp.ion()
-       plot_every=5000
+       plot_every=10
     else:
        plot_every=0
 
@@ -494,17 +495,17 @@ def exp2():
     #mp.plot(x[:,0],x[:,1],'bo')
     #mp.show()
     max_epoch = 30000
-    batchsize = 100
-    nx, nh = 2, 10
-    sigma = 0.1
+    batchsize = n_examples
+    nx, nh = 2, 3
+    sigma = 1
 
     #energyfn = GaussianEnergy(nx, nh, sigma=sigma)
-    energyfn = NeuroEnergy(nx, nh, sigma=sigma, corrupt_factor=0.1)
+    energyfn = NeuroEnergy(nx, nh, sigma=sigma, corrupt_factor=1e-20)
     #opt = adam()
     opt = sgd(0.0001)
     inferencer = LangevinEMinferencer(energyfn,n_inference_it=1)
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
-    model.mainloop(max_epoch,update_params_during_inference=3,detailed_monitoring=False, burn_in=10, plot_every=plot_every)
+    model.mainloop(max_epoch,update_params_during_inference=0,detailed_monitoring=False, burn_in=4, plot_every=plot_every)
 
 
 def exp_mnist():
