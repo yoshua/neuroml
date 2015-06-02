@@ -11,6 +11,8 @@ from theano.sandbox.rng_mrg import MRG_RandomStreams
 # for interactive things
 import matplotlib.pyplot as mp
 import pylab as pl
+import matplotlib.cm as cm
+
 
 def sharedX(x) : return theano.shared( theano._asarray(x, dtype=theano.config.floatX) ) 
 def softplus(x) : return T.nnet.softplus(x)
@@ -101,22 +103,58 @@ class sgd(object):
       def initialize_aux(self,shape):
           return ()
 
+def get_ll(x, parzen, batch_size=10):
+    """
+    Credit: Yann N. Dauphin
+    """
 
-def plot_generated_samples(prev_x,x,data):
-    mp.hold(True)
-    fig=mp.figure()
-    #mp.plot(x[:,0],x[:,1],'bo')
-    #mp.show()   
-    n=min(100,data.shape[0]) 
-    mp.plot(data[:n,0],data[:n,1],'ro')
-    mp.draw()
-    mp.plot(x[:,0],x[:,1],'bo')
-    mp.draw()
-    mp.axes().set_aspect('equal')
-    #pl.quiver(prev_x[:,0],prev_x[:,1],x[:,0]-prev_x[:,0],x[:,1]-prev_x[:,1])
-    #pl.show()
-    mp.show()
+    inds = range(x.shape[0])
+    n_batches = int(numpy.ceil(float(len(inds)) / batch_size))
 
+    times = []
+    lls = []
+    for i in range(n_batches):
+        begin = time.time()
+        ll = parzen(x[inds[i::n_batches]])
+        end = time.time()
+        times.append(end-begin)
+        lls.extend(ll)
+
+        #if i % 10 == 0:
+        #    print i, numpy.mean(times), numpy.mean(nlls)
+
+    return numpy.array(lls)
+
+def displaynetwork(data, nx, ny, width) :
+    i = 0
+    data_ = np.zeros((nx*width, ny*width))
+    for x in range(nx) :
+        for y in range(ny) :
+            data_[ x*width : (x+1)*width, y*width : (y+1)*width ] = data[i].reshape(width,width)#/data[i].min
+            i += 1
+    #plt.rcParams['figure.figsize'] = (16,16)
+    mp.imshow(data_, cmap = cm.Greys_r)
+    mp.savefig('test.png')
+
+def plot_generated_samples(prev_x,x,data, data_category = 'toy', plot_config = None):
+    if data_category is 'toy':
+        mp.hold(True)
+        fig=mp.figure()
+        #mp.plot(x[:,0],x[:,1],'bo')
+        #mp.show()   
+        n=min(100,data.shape[0]) 
+        mp.plot(data[:n,0],data[:n,1],'ro')
+        mp.draw()
+        mp.plot(x[:,0],x[:,1],'bo')
+        mp.draw()
+        mp.axes().set_aspect('equal')
+        #pl.quiver(prev_x[:,0],prev_x[:,1],x[:,0]-prev_x[:,0],x[:,1]-prev_x[:,1])
+        #pl.show()
+        mp.show()
+
+    if data_category is 'mnist':
+        (nx, ny, width) = plot_config
+        displaynetwork(x, nx, ny, width) 
 
 class LatentEnergyFn(object):
       def __init__(self,sigma=0.01,nx=2,nh=1,corrupt_factor=1.,delta_factor=2-np.sqrt(2.)):
@@ -327,7 +365,7 @@ class EMdsm(EMmodels):
               values.append(v)
           return v,values
 
-      def mainloop(self, max_epoch = 100, detailed_monitoring=False, burn_in=10, update_params_during_inference=0, plot_every=1000):
+      def mainloop(self, max_epoch = 100, detailed_monitoring=False, burn_in=10, update_params_during_inference=0, plot_every=1000, plot_data_category = 'toy', plot_config = None):
          try:
            for e in xrange(max_epoch):
               values = []
@@ -369,14 +407,14 @@ class EMdsm(EMmodels):
                      for t in range(burn_in):
                         self.inferencer.generate_step()
                      new_x=self.generated_x.get_value()
-                     plot_generated_samples(previous_x,new_x,self.x.get_value())
+                     plot_generated_samples(previous_x,new_x,self.x.get_value(), plot_data_category, plot_config)
                   #mp.show()
          except (KeyboardInterrupt, EOFError):
             pass
          for t in range(burn_in):
             self.inferencer.generate_step()
          new_x=self.generated_x.get_value()
-         plot_generated_samples(previous_x,new_x,self.x.get_value())
+         plot_generated_samples(previous_x,new_x,self.x.get_value(), plot_data_category, plot_config)
 
       def monitor(self):
           [E, w_h, w_x, w] = self.energyfn.params_monitor(self)
@@ -472,6 +510,42 @@ def exp2():
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
     model.mainloop(max_epoch,update_params_during_inference=0,detailed_monitoring=False, burn_in=10, plot_every=5000)
 
+
+def exp_mnist():
+    # information about x
+    # MNIST
+    (train_x, train_y), (valid_x, valid_y), (test_x, test_y) = np.load('/data/lisatmp3/saizheng/problems/targetprop/mnist.pkl')
+
+    def prep(x):
+        # just add any preprocess you want
+        return sharedX(x/np.max(np.abs(x)))
+
+    train_x, valid_x, test_x = prep(train_x), prep(valid_x), prep(test_x)
+
+    x=train_x.get_value()
+    #mp.plot(x[:,0],x[:,1],'bo')
+    #mp.show()
+    max_epoch = 20000
+    batchsize = 100
+    nx, nh = 784, 400
+    sigma = 0.1
+
+    #energyfn = GaussianEnergy(nx, nh, sigma=sigma)
+    energyfn = NeuroEnergy(nx, nh, sigma=sigma, corrupt_factor=0.1)
+    #opt = adam()
+    opt = sgd(.0001)
+    inferencer = LangevinEMinferencer(energyfn, epsilon=0.25/(sigma*sigma), 
+                                      n_inference_it=1)
+    model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
+    model.mainloop(max_epoch,update_params_during_inference=0,
+                   detailed_monitoring=False,
+                   burn_in=10,
+                   plot_every=5000,
+                   plot_data_category='mnist',
+                   plot_config = [10, 10, 28])
+
+
+
 def plot_energy():
     # information about x
     # TOY GAUSSIAN DATA 2D
@@ -534,6 +608,7 @@ def plot_energy():
 
     
 if __name__ == "__main__":
+    #exp_mnist()
     exp2() 
     #plot_energy()
 
