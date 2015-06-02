@@ -373,6 +373,10 @@ class EMdsm(EMmodels):
                   #mp.show()
          except (KeyboardInterrupt, EOFError):
             pass
+         for t in range(burn_in):
+            self.inferencer.generate_step()
+         new_x=self.generated_x.get_value()
+         plot_generated_samples(previous_x,new_x,self.x.get_value())
 
       def monitor(self):
           [E, w_h, w_x, w] = self.energyfn.params_monitor(self)
@@ -454,19 +458,19 @@ def exp2():
     x=train_x.get_value()
     #mp.plot(x[:,0],x[:,1],'bo')
     #mp.show()
-    max_epoch = 10000
+    max_epoch = 20000
     batchsize = 100
     nx, nh = 2, 10
-    sigma = 1
+    sigma = 0.1
 
     #energyfn = GaussianEnergy(nx, nh, sigma=sigma)
-    energyfn = NeuroEnergy(nx, nh, sigma=sigma, corrupt_factor=1)
-    opt = adam()
-    #opt = sgd(.001)
+    energyfn = NeuroEnergy(nx, nh, sigma=sigma, corrupt_factor=0.1)
+    #opt = adam()
+    opt = sgd(.001)
     inferencer = LangevinEMinferencer(energyfn, epsilon=0.25/(sigma*sigma), 
                                       n_inference_it=1)
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
-    model.mainloop(max_epoch,update_params_during_inference=0,detailed_monitoring=False, burn_in=10, plot_every=1000)
+    model.mainloop(max_epoch,update_params_during_inference=0,detailed_monitoring=False, burn_in=10, plot_every=2500)
 
 def plot_energy():
     # information about x
