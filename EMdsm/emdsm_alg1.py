@@ -1,10 +1,11 @@
 import theano, os, time, pickle
 import numpy as np
 from theano import tensor as T
+from theano import printing
 #from util import *
 import pdb
 # from theano.tensor import nnet
-from theano.tensor.nnet import softplus
+from theano.tensor.nnet import softplus,sigmoid
 from theano.sandbox.rng_mrg import MRG_RandomStreams
 
 # for interactive things
@@ -15,6 +16,14 @@ def sharedX(x) : return theano.shared( theano._asarray(x, dtype=theano.config.fl
 def softplus(x) : return T.nnet.softplus(x)
 def relu(x) : return x * (x > 1e-15)
 def rho(x) : return relu(x+0.5) - relu(x-0.5)
+
+debug_printing = False
+
+def pp(s,x) : 
+    if debug_printing:
+       return printing.Print(s)(x)
+    return x
+
  
 RNG = MRG_RandomStreams(max(np.random.RandomState(1364).randint(2 ** 15), 1))
 def gaussian(x, std, rng=RNG) : return x + rng.normal(std=std, size=x.shape, dtype=x.dtype)
@@ -109,9 +118,8 @@ def plot_generated_samples(prev_x,x,data):
     mp.show()
 
 
-
 class LatentEnergyFn(object):
-      def __init__(self,sigma=0.01,nx=2,nh=1,corrupt_factor=1.,delta_factor=2+np.sqrt(2.)):
+      def __init__(self,sigma=0.01,nx=2,nh=1,corrupt_factor=1.,delta_factor=2-np.sqrt(2.)):
           self.sigma=sigma
           self.nx=nx
           self.nh=nh
@@ -128,19 +136,19 @@ class LatentEnergyFn(object):
       def set_rest(self):
           self.dEdh = T.grad(self.E,self.h)
           self.dEdx = T.grad(self.E,self.x)
-          self.Rh = self.h - self.sigma**2 * self.dEdh
-          self.Rx = self.x - self.sigma**2 * self.dEdx
-          self.dEdh_n = T.grad(self.E_n, self.h_n)
-          self.dEdx_n = T.grad(self.E_n, self.x_n)
-          self.Rh_n = self.h_n - self.sigma**2 * self.dEdh_n
-          self.Rx_n = self.x_n - self.sigma**2 * self.dEdx_n
-          self.delta_x = self.Rx_n - self.x
-          self.delta_h = self.Rh_n - self.h
-          self.new_x = self.x + self.delta_factor*self.delta_x
-          self.new_h = self.h + self.delta_factor*self.delta_h
-          self.new_x_n = self.new_x + gaussian(0.*self.x, 1)*self.sigma*self.corrupt_factor
-          self.new_clamped_x_n = self.x + gaussian(0.*self.x, 1)*self.sigma*self.corrupt_factor
-          self.new_h_n = self.new_h + gaussian(0.*self.h, 1)*self.sigma*self.corrupt_factor
+          self.Rh = pp("Rh:",self.h - self.sigma**2 * self.dEdh)
+          self.Rx = pp("Rx:",self.x - self.sigma**2 * self.dEdx)
+          self.dEdh_n = pp("dEdh_n:",T.grad(self.E_n, self.h_n))
+          self.dEdx_n = pp("dEdx_n:",T.grad(self.E_n, self.x_n))
+          self.Rh_n = pp("Rh_n:",self.h_n - self.sigma**2 * self.dEdh_n)
+          self.Rx_n = pp("Rx_n:",self.x_n - self.sigma**2 * self.dEdx_n)
+          self.delta_x = pp("delta_x:",self.Rx_n - self.x)
+          self.delta_h = pp("delta_h:",self.Rh_n - self.h)
+          self.new_x = pp("new_x:",self.x + self.delta_factor*self.delta_x)
+          self.new_h = pp("new_h:",self.h + self.delta_factor*self.delta_h)
+          self.new_x_n = pp("new_x_n:",self.new_x + gaussian(0.*self.x, 1)*self.sigma*self.corrupt_factor)
+          self.new_clamped_x_n = pp("new_clamped_x_n:",self.x + gaussian(0.*self.x, 1)*self.sigma*self.corrupt_factor)
+          self.new_h_n = pp("new_x_n:",self.new_h + gaussian(0.*self.h, 1)*self.sigma*self.corrupt_factor)
 
       def penalty(self):
           return 0
@@ -149,17 +157,17 @@ class GaussianEnergy(LatentEnergyFn):
       def __init__(self,nx,nh,sigma=0.01,inithsigma=0.1,initxsigma=0.1,initwsigma=0.1):
           super(GaussianEnergy, self).__init__(sigma,nx,nh)
           self.hprec_pre=sharedX(np.random.normal(0,inithsigma,nh))
-          self.hprec=softplus(self.hprec_pre)
+          self.hprec=sigmoid(self.hprec_pre)
           self.xprec_pre=sharedX(np.random.normal(0,initxsigma,nx))
-          self.xprec=softplus(self.xprec_pre)
+          self.xprec=sigmoid(self.xprec_pre)
           self.w=sharedX(np.random.normal(0,initwsigma,(nx,nh)))
           self.params=[self.w,self.xprec_pre,self.hprec_pre]
 
-          self.E = T.sum(T.dot(self.x*self.x,self.xprec)+T.dot(self.h*self.h,self.hprec)
-                  -T.sum(self.h*T.dot(self.x,self.w),axis=1))
+          self.E = pp("E:",T.sum(T.dot(self.x*self.x,self.xprec)+T.dot(self.h*self.h,self.hprec) \
+                          -T.sum(self.h*T.dot(self.x,self.w),axis=1)))
 
-          self.E_n = T.sum(T.dot(self.x_n*self.x_n,self.xprec)+T.dot(self.h_n*self.h_n,self.hprec)
-                   -T.sum(self.h_n*T.dot(self.x_n,self.w),axis=1))
+          self.E_n = pp("E_n:",T.sum(T.dot(self.x_n*self.x_n,self.xprec)+T.dot(self.h_n*self.h_n,self.hprec) \
+                              -T.sum(self.h_n*T.dot(self.x_n,self.w),axis=1)))
 
           self.set_rest()
 
@@ -176,13 +184,13 @@ class GaussianEnergy(LatentEnergyFn):
 
 
 class NeuroEnergy(LatentEnergyFn):
-      def __init__(self, nx, nh, sigma=0.01, inithsigma=1, initxsigma=1, initwsigma=.1, corrupt_factor=1.):
+      def __init__(self, nx, nh, sigma=0.01, inithsigma=.1, initxsigma=.1, initwsigma=.1, corrupt_factor=1.):
          super(NeuroEnergy, self).__init__(sigma, nx, nh,corrupt_factor) 
          self.pp_h = sharedX(np.abs(np.random.normal(0,inithsigma,nh)))
-         self.p_h = softplus(self.pp_h)
+         self.p_h = sigmoid(self.pp_h)
          self.b_h = sharedX(np.zeros(nh))
          self.pp_x = sharedX(np.abs(np.random.normal(0,initxsigma,nx)))
-         self.p_x = softplus(self.pp_x)
+         self.p_x = sigmoid(self.pp_x)
          self.b_x = sharedX(np.zeros(nx))
          r = initwsigma/max(nx,nh)
          self.w = sharedX(np.random.uniform(-r,r,(nx,nh)))
@@ -195,8 +203,8 @@ class NeuroEnergy(LatentEnergyFn):
                        - T.dot(rho(h), b_h).sum() - T.dot(rho(x), b_x).sum()
          # /(2*sigma**2) 
 
-         self.E = self.E_fn(self.x,self.h,self.b_h,self.b_x,self.w,self.p_h,self.p_x)
-         self.E_n = self.E_fn(self.x_n,self.h_n,self.b_h,self.b_x,self.w,self.p_h,self.p_x)
+         self.E = pp("E:",self.E_fn(self.x,self.h,self.b_h,self.b_x,self.w,self.p_h,self.p_x))
+         self.E_n = pp("E_n:",self.E_fn(self.x_n,self.h_n,self.b_h,self.b_x,self.w,self.p_h,self.p_x))
 
          self.set_rest()
          self.monitor = theano.function([], self.params)
@@ -319,7 +327,7 @@ class EMdsm(EMmodels):
               values.append(v)
           return v,values
 
-      def mainloop(self, max_epoch = 100, detailed_monitoring=False, burn_in=10, update_params_during_inference=0):
+      def mainloop(self, max_epoch = 100, detailed_monitoring=False, burn_in=10, update_params_during_inference=0, plot_every=1000):
          try:
            for e in xrange(max_epoch):
               values = []
@@ -331,6 +339,7 @@ class EMdsm(EMmodels):
                       print "costs (||dE/ds||^2,||dE/dx||^2,E) before inference:    ",self.costs(k)
                       print self.h.get_value()[0,:]
                       print "params=",self.energyfn.params_monitor()
+                   #pdb.set_trace()
                    for t in xrange(self.inferencer.n_inference_it):
                        self.inferencer.inference_h(k)
                        if update_params_during_inference>0 and t%update_params_during_inference == update_params_during_inference-1: #and t>self.inferencer.n_inference_it/2 
@@ -351,7 +360,7 @@ class EMdsm(EMmodels):
                   #print self.update_p_names,costs,"params=",self.energyfn.params_monitor()
                   print self.update_p_names,costs
                   #self.print_monitor()
-                  if e % 200 == 0:
+                  if e % plot_every == 0:
                      previous_x = self.generated_x.get_value()
                      minx=np.min(previous_x)
                      maxx=np.max(previous_x)
@@ -449,6 +458,7 @@ def exp2():
     batchsize = 100
     nx, nh = 2, 10
     sigma = 1
+
     #energyfn = GaussianEnergy(nx, nh, sigma=sigma)
     energyfn = NeuroEnergy(nx, nh, sigma=sigma, corrupt_factor=1)
     opt = adam()
@@ -456,7 +466,7 @@ def exp2():
     inferencer = LangevinEMinferencer(energyfn, epsilon=0.25/(sigma*sigma), 
                                       n_inference_it=1)
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
-    model.mainloop(max_epoch,update_params_during_inference=0,detailed_monitoring=True, burn_in=5)
+    model.mainloop(max_epoch,update_params_during_inference=0,detailed_monitoring=False, burn_in=10, plot_every=1000)
 
 def plot_energy():
     # information about x
