@@ -514,7 +514,8 @@ def exp2():
 def exp_mnist():
     # information about x
     # MNIST
-    (train_x, train_y), (valid_x, valid_y), (test_x, test_y) = np.load('/data/lisatmp3/saizheng/problems/targetprop/mnist.pkl')
+    path = '/data/lisa/data/mnist/mnist.pkl' 
+    (train_x, train_y), (valid_x, valid_y), (test_x, test_y) = np.load(path)
 
     def prep(x):
         # just add any preprocess you want
