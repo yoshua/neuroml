@@ -99,7 +99,7 @@ class sgd(object):
           return self.updates
  
       def update(self,theta,gradient,aux):
-          return (theta-self.lrate*gradient, aux)
+          return (pp("new theta:",theta-self.lrate*pp("g:",gradient)), aux)
 
       def initialize_aux(self,shape):
           return ()
@@ -229,7 +229,7 @@ class EnergyFn(object):
           self.u1_x = pp("u1_x:", self.u0_x - np.sqrt(2)*self.sigma*T.grad(self.E_x1, self.x1_x))
           self.energy_difference = self.elementwise_E - self.elementwise_E_lambda(self.x1_x)
           self.log_proposal_diff = -0.5*(T.sum(self.u1_x*self.u1_x,axis=1))
-          self.accept_prob = T.minimum(1.,T.exp(self.energy_difference+self.log_proposal_diff))
+          self.accept_prob = T.minimum(1.,0.9+T.exp(self.energy_difference+self.log_proposal_diff))
           self.accept = (RNG.binomial(size=self.accept_prob.shape,n=1,p=self.accept_prob,dtype=self.accept_prob.dtype)).reshape((-1, 1))
           #self.accept = T.addbroadcast(self.accept, 1)
           self.generated_x = self.accept*self.x1_x+(1.-self.accept)*self.x
@@ -268,9 +268,9 @@ class AutoEncoderEnergy(EnergyFn):
          self.params = [self.w, self.b_x, self.b_h]
 
          self.elementwise_E_lambda = lambda x:\
-                              0.5*T.sum(x*x,axis=1)\
+                              (0.5*T.sum(x*x,axis=1)\
                               - T.sum(softplus(self.b_h + T.dot(x,self.w)),axis=1) \
-                              - T.dot(x, self.b_x)
+                              - T.dot(x, self.b_x))/sigma**2
 
          self.set_rest()
 
@@ -291,7 +291,7 @@ class dsm:
           self.generated_x = sharedX(np.random.normal(0,0.3,((self.batchsize, self.energyfn.nx))))
 
           # set cost
-          self.reconstruction_cost = T.sum(self.energyfn.delta_x**2)
+          self.reconstruction_cost = T.sum(self.energyfn.delta_x**2)/minibatchsize
           self.cost = self.reconstruction_cost + self.energyfn.penalty()
 
           # set optimizer
@@ -307,7 +307,7 @@ class dsm:
                givens = {self.energyfn.x : x[self.index*self.batchsize : (self.index+1)*self.batchsize]})
 
           self.costs = theano.function(
-               [self.index], [self.cost/minibatchsize,self.reconstruction_cost/minibatchsize,self.energyfn.E/minibatchsize],
+               [self.index], [self.cost,self.reconstruction_cost,self.energyfn.E/minibatchsize],
                givens = {self.energyfn.x : x[self.index*self.batchsize : (self.index+1)*self.batchsize]})
 
           # return monitoring values
@@ -316,6 +316,10 @@ class dsm:
                [self.index], [self.energyfn.E],
                givens = {self.energyfn.x : x[self.index*self.batchsize : (self.index+1)*self.batchsize]})
                
+          self.generate_step = theano.function([ ],[self.energyfn.accept.mean()],
+                                updates = [(self.generated_x,self.energyfn.generated_x)],
+                                givens = {self.energyfn.x : self.generated_x})
+
       # seems not used
       def reset_x(self, x):
           self.x = x
@@ -345,12 +349,13 @@ class dsm:
                    values.append(list)
                    if detailed_monitoring: print "costs (||dE/ds||^2,||dE/dx||^2,E) after params update: ",self.costs(k)
               costs *= 1./self.n_batch
-              if e % min(plot_every,100) == 0 or e==max_epoch-1:
+              if e % min(plot_every,1) == 0 or e==max_epoch-1:
                   print "epoch = ", e
                   print self.update_p_names,costs
                   if plot_every>0 and (e % plot_every == 0 or e==max_epoch-1):
-                     plot_energy_surface(self.energyfn)
-                     plot_reconstructions(self.energyfn,self.x.get_value())
+                     if plot_data_category=='toy':
+                        plot_energy_surface(self.energyfn)
+                        plot_reconstructions(self.energyfn,self.x.get_value())
                      if generate_burn_in>0:
                         old_corrupt_factor = self.energyfn.corrupt_factor.get_value()
                         self.energyfn.corrupt_factor.set_value(1.)
@@ -358,7 +363,7 @@ class dsm:
                         self.generated_x.set_value(previous_x.astype(theano.config.floatX))
                         sum_accept_freq = 0.
                         for t in range(generate_burn_in):
-                            (accept_freq,)=self.inferencer.generate_step()
+                            (accept_freq,)=self.generate_step()
                             sum_accept_freq=sum_accept_freq+accept_freq
                         print "acceptance ratio=",sum_accept_freq/generate_burn_in
                         new_x=self.generated_x.get_value()
@@ -410,11 +415,11 @@ def exp2():
 
     if plotting:
        #mp.ion()
-       plot_every=5000
+       plot_every=20000
     else:
        plot_every=0
 
-    n_examples = 300
+    n_examples = 1000
     nx = 2
     means = [[-1.5, 0],[0,4],[0,0]]
     covs = [[[0.02, -.3],[.11, -.3]],[[1.01,.99],[.99,1.01]],[[1.05,-.95],[-.95,1.05]]]
@@ -427,14 +432,14 @@ def exp2():
     x=train_x.get_value()
     #mp.plot(x[:,0],x[:,1],'bo')
     #mp.show()
-    max_epoch = 30000
-    batchsize = n_examples
-    sigma = 0.05
-    nh = 10
+    max_epoch = 100000
+    batchsize = 100
+    sigma = 0.1
+    nh = 50
 
     energyfn = AutoEncoderEnergy(nx, nh, sigma=sigma, corrupt_factor=1)
-    #opt = adam()
-    opt = sgd(0.1)
+    opt = adam()
+    #opt = sgd(0.1)
     model = dsm(train_x, batchsize, energyfn, opt)
     plot_energy_surface(energyfn)
     model.mainloop(max_epoch,detailed_monitoring=False, generate_burn_in=0, plot_every=plot_every)
@@ -455,20 +460,21 @@ def exp_mnist():
     train_x, valid_x, test_x = prep(train_x), prep(valid_x), prep(test_x)
 
     x=train_x.get_value()
-    #mp.plot(x[:,0],x[:,1],'bo')
+    print x.shape
     #mp.show()
     max_epoch = 20000
-    batchsize = 100
+    batchsize = 256
     nx = 784
     sigma = 0.1
+    nh = 200
 
-    energyfn = NeuroEnergy(nx, sigma=sigma, corrupt_factor=0.1)
-    #opt = adam()
-    opt = sgd(.0001)
+    energyfn = AutoEncoderEnergy(nx, nh, sigma=sigma, corrupt_factor=1)
+    opt = adam()
+    #opt = sgd(.1)
     model = dsm(train_x, batchsize, energyfn, opt)
     model.mainloop(max_epoch,
                    detailed_monitoring=False,
-                   plot_every=5000,
+                   plot_every=20,
                    plot_data_category='mnist',
                    plot_config = [10, 10, 28])
 
@@ -534,7 +540,7 @@ def plot_energy():
 
     
 if __name__ == "__main__":
-    #exp_mnist()
-    exp2() 
+    exp_mnist()
+    #exp2() 
     #plot_energy()
 
