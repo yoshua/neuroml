@@ -7,13 +7,12 @@ import pdb
 # from theano.tensor import nnet
 from theano.tensor.nnet import softplus,sigmoid
 from theano.sandbox.rng_mrg import MRG_RandomStreams
+from theano.tensor.shared_randomstreams import RandomStreams
 
 # for interactive things
 import matplotlib.pyplot as mp
 import pylab as pl
 import matplotlib.cm as cm
-
-theano_rng =MRG_RandomStreams(0602)
 
 def sharedX(x) : return theano.shared( theano._asarray(x, dtype=theano.config.floatX) ) 
 def softplus(x) : return T.nnet.softplus(x)
@@ -28,7 +27,8 @@ def pp(s,x) :
     return x
 
  
-RNG = MRG_RandomStreams(max(np.random.RandomState(1364).randint(2 ** 15), 1))
+#RNG = MRG_RandomStreams(max(np.random.RandomState(1364).randint(2 ** 15), 1))
+RNG = RandomStreams(max(np.random.RandomState(1364).randint(2 ** 15), 1))
 def gaussian(x, std, rng=RNG) : return x + rng.normal(std=std, size=x.shape, dtype=x.dtype)
 
 class adam(object):
@@ -157,6 +157,46 @@ def plot_generated_samples(prev_x,x,data, data_category = 'toy', plot_config = N
         (nx, ny, width) = plot_config
         displaynetwork(x, nx, ny, width) 
 
+def plot_energy_surface(inferencer):
+    from mpl_toolkits.mplot3d import Axes3D
+    from matplotlib import cm
+    from matplotlib.ticker import LinearLocator, FormatStrFormatter
+    import matplotlib.pyplot as plt
+    (x1,x2) = np.meshgrid(np.arange(-.5,.5,.05),np.arange(-.5,.5,.05))
+    x = np.vstack((x1.flatten(),x2.flatten())).T
+    h = np.zeros((x.shape[0],inferencer.energyfn.nh))
+    print x.shape,h.shape,inferencer.energyfn.E_fn(x,h)
+    for i in range(10):
+        (h,) = inferencer.h_map(x,h)
+        #print "total E=",inferencer.energyfn.E_fn(x,h)
+    (E_,) = inferencer.energyfn.elementwise_E_fn(x,h)
+    E_ = E_.reshape(x1.shape)
+    fig = plt.figure()
+    ax = fig.gca(projection='3d')
+    surf = ax.plot_surface(x1, x2, E_, rstride=1, cstride=1, cmap=cm.coolwarm,
+            linewidth=0, antialiased=False)
+    ax.set_zlim(np.min(E_), np.max(E_))
+    ax.zaxis.set_major_locator(LinearLocator(10))
+    ax.zaxis.set_major_formatter(FormatStrFormatter('%.02f'))
+    fig.colorbar(surf, shrink=0.5, aspect=5)
+    plt.show() 
+    plt.savefig('E.png')
+    
+def plot_reconstructions(inferencer,x):
+    h = np.zeros((x.shape[0],inferencer.energyfn.nh))
+    for i in range(10):
+        (h,) = inferencer.h_map(x,h)
+        #print "total E=",inferencer.energyfn.E_fn(x,h)
+    (xn, Rxn) = inferencer.energyfn.reconstructions(x,h)
+    mp.hold(True)
+    fig=mp.figure()
+    mp.plot(x[:,0],x[:,1],'ro')
+    mp.draw()
+    mp.axes().set_aspect('equal')
+    pl.quiver(xn[:,0],xn[:,1],Rxn[:,0]-xn[:,0],Rxn[:,1]-xn[:,1],color='g')
+    pl.quiver(xn[:,0],xn[:,1],x[:,0]-xn[:,0],x[:,1]-xn[:,1],color='r')
+    pl.show()
+
 class LatentEnergyFn(object):
       def __init__(self,sigma=0.01,nx=2,nh=1,corrupt_factor=1.,delta_factor=2-np.sqrt(2.)):
           self.sigma=sigma
@@ -176,11 +216,11 @@ class LatentEnergyFn(object):
 
       def set_rest(self):
 
-          self.total_E_lambda = lambda x,h,b_h,b_x,w,p_h,p_x: self.elementwise_E_lambda(x,h,b_h,b_x,w,p_h,p_x).sum()
-          self.E = pp("E:",self.total_E_lambda(self.x,self.h,self.b_h,self.b_x,self.w,self.p_h,self.p_x))
+          self.total_E_lambda = lambda x,h: self.elementwise_E_lambda(x,h).sum()
+          self.E = pp("E:",self.total_E_lambda(self.x,self.h))
           self.E_fn = theano.function([self.x,self.h],[self.E])
-          self.E_n = pp("E_n:",self.total_E_lambda(self.x_n,self.h_n,self.b_h,self.b_x,self.w,self.p_h,self.p_x))
-          self.elementwise_E = self.elementwise_E_lambda(self.x,self.h,self.b_h,self.b_x,self.w,self.p_h,self.p_x)
+          self.E_n = pp("E_n:",self.total_E_lambda(self.x_n,self.h_n))
+          self.elementwise_E = self.elementwise_E_lambda(self.x,self.h)
           self.elementwise_E_fn = theano.function([self.x,self.h],[self.elementwise_E])
 
           self.dEdh = T.grad(self.E,self.h)
@@ -195,6 +235,10 @@ class LatentEnergyFn(object):
           self.delta_h = pp("delta_h:",self.Rh_n - self.h)
           self.new_x = pp("new_x:",self.x + self.delta_factor*self.delta_x)
           self.new_h = pp("new_h:",self.h + self.delta_factor*self.delta_h)
+
+          # to visualize reconstructions
+          self.reconstructions = theano.function([self.x,self.h],[self.x_n,self.Rx_n])
+
           # to implement Langevin MCMC with rejection
           # u0 from HMC  with rho=sqrt(2)*sigma
           self.ustar_x = pp("ustart_x:",gaussian(0.*self.x, 1))
@@ -203,13 +247,13 @@ class LatentEnergyFn(object):
           self.u0_h = pp("u0_x:",self.ustar_h-np.sqrt(2.)*self.sigma*self.dEdh)
           self.x1_x = pp("x1_x:",self.x-np.sqrt(2.)*self.sigma*self.u0_x)
           self.x1_h = pp("x1_h:",self.h-np.sqrt(2.)*self.sigma*self.u0_h)
-          self.E_x1 = pp("E_x1:",self.total_E_lambda(self.x1_x,self.x1_h,self.b_h,self.b_x,self.w,self.p_h,self.p_x))
+          self.E_x1 = pp("E_x1:",self.total_E_lambda(self.x1_x,self.x1_h))
           self.u1_x = pp("u1_x:", self.u0_x - np.sqrt(2)*self.sigma*T.grad(self.E_x1, self.x1_x))
           self.u1_h = pp("u1_h:", self.u0_h - np.sqrt(2)*self.sigma*T.grad(self.E_x1, self.x1_h))
-          self.energy_difference = self.elementwise_E - self.elementwise_E_lambda(self.x1_x,self.x1_h,self.b_h,self.b_x,self.w,self.p_h,self.p_x)
+          self.energy_difference = self.elementwise_E - self.elementwise_E_lambda(self.x1_x,self.x1_h)
           self.log_proposal_diff = -0.5*(T.sum(self.u1_x*self.u1_x,axis=1)+T.sum(self.u1_h*self.u1_h,axis=1))
           self.accept_prob = T.minimum(1.,T.exp(self.energy_difference+self.log_proposal_diff))
-          self.accept = (theano_rng.binomial(size=self.accept_prob.shape,n=1,p=self.accept_prob,dtype=self.accept_prob.dtype)).reshape((-1, 1))
+          self.accept = (RNG.binomial(size=self.accept_prob.shape,n=1,p=self.accept_prob,dtype=self.accept_prob.dtype)).reshape((-1, 1))
           #self.accept = T.addbroadcast(self.accept, 1)
           self.generated_x = self.accept*self.x1_x+(1.-self.accept)*self.x
           self.generated_h = self.accept*self.x1_h+(1.-self.accept)*self.h
@@ -219,7 +263,7 @@ class LatentEnergyFn(object):
           return 0
 
 class GaussianEnergy(LatentEnergyFn):
-      def __init__(self,nx,nh,sigma=0.01,inithsigma=0.1,initxsigma=0.1,initwsigma=0.1):
+      def __init__(self,nx,nh,sigma=0.01,inithsigma=0.1,initxsigma=0.1,initwsigma=2):
           super(GaussianEnergy, self).__init__(sigma,nx,nh)
           self.hprec_pre=sharedX(np.random.normal(0,inithsigma,nh))
           self.hprec=sigmoid(self.hprec_pre)
@@ -252,26 +296,54 @@ class NeuroEnergy(LatentEnergyFn):
       def __init__(self, nx, nh, sigma=0.01, inithsigma=.1, initxsigma=.1, initwsigma=.1, corrupt_factor=1.):
          super(NeuroEnergy, self).__init__(sigma, nx, nh,corrupt_factor) 
          self.pp_h = sharedX(np.abs(np.random.normal(0,inithsigma,nh)))
-         self.p_h = sigmoid(self.pp_h)
+         self.p_h = 1+1e-10*sigmoid(self.pp_h)
          self.b_h = sharedX(np.zeros(nh))
          self.pp_x = sharedX(np.abs(np.random.normal(0,initxsigma,nx)))
-         self.p_x = sigmoid(self.pp_x)
+         self.p_x = 1+1e-10*sigmoid(self.pp_x)
          self.b_x = sharedX(np.zeros(nx))
          r = initwsigma/max(nx,nh)
          self.w = sharedX(np.random.uniform(-r,r,(nx,nh)))
          #self.w = sharedX([[3.],[3.]])
          self.params = [self.w, self.b_h, self.b_x, self.pp_h, self.pp_x]
 
-         self.elementwise_E_lambda = lambda x,h,b_h,b_x,w,p_h,p_x: \
-                              0.5*(T.sum(x*x*p_x,axis=1)+T.sum(h*h*p_h,axis=1))\
+         self.elementwise_E_lambda = lambda x,h:\
+                              0.5*(T.sum(x*x*self.p_x,axis=1)+T.sum(h*h*self.p_h,axis=1))\
                               - T.sum(rho(h)*T.dot(rho(x),self.w),axis=1) \
-                              - T.dot(rho(h), b_h) - T.dot(rho(x), b_x)
+                              - T.dot(rho(h), self.b_h) - T.dot(rho(x), self.b_x)
 
          self.set_rest()
          self.monitor = theano.function([], self.params)
 
       def params_monitor(self):
           return ["w","b_h","b_x","pp_h","pp_x",self.monitor()]
+
+
+class VisibleNeuroEnergy(LatentEnergyFn):
+      def __init__(self, nx, nh, sigma=0.01, inithsigma=.1, initxsigma=.1, initwsigma=.1, corrupt_factor=1.):
+         super(NeuroEnergy, self).__init__(sigma, nx, nh,corrupt_factor) 
+         self.pp_h = sharedX(np.abs(np.random.normal(0,inithsigma,nh)))
+         self.p_h = 1+1e-10*sigmoid(self.pp_h)
+         self.b_h = sharedX(np.zeros(nh))
+         self.pp_x = sharedX(np.abs(np.random.normal(0,initxsigma,nx)))
+         self.p_x = 1+1e-10*sigmoid(self.pp_x)
+         self.b_x = sharedX(np.zeros(nx))
+         r = initwsigma/max(nx,nh)
+         self.w = sharedX(np.random.uniform(-r,r,(nx,nh)))
+         self.wx = sharedX(np.random.uniform(-r,r,(nx,nx)))
+         #self.w = sharedX([[3.],[3.]])
+         self.params = [self.w, self.b_h, self.b_x, self.pp_h, self.pp_x, self.wx]
+
+         self.elementwise_E_lambda = lambda x,h:\
+                              0.5*(T.sum(x*x*self.p_x,axis=1)+T.sum(h*h*self.p_h,axis=1))\
+                              - T.sum(rho(h)*T.dot(rho(x),self.w),axis=1) \
+                              - T.sum(rho(x)*T.dot(rho(x),self.wx),axis=1) \
+                              - T.dot(rho(h), self.b_h) - T.dot(rho(x), self.b_x)
+
+         self.set_rest()
+         self.monitor = theano.function([], self.params)
+
+      def params_monitor(self):
+          return ["w","b_h","b_x","pp_h","pp_x","wx",self.monitor()]
 
 
 class EMinferencer(object):
@@ -292,6 +364,11 @@ class LangevinEMinferencer(EMinferencer):
           self.observed_x = observed_x
           self.generated_x = generated_x
           self.h = h
+
+          self.new_h = theano.function([self.energyfn.x,self.energyfn.h],
+                                       [self.energyfn.new_h])
+          self.h_map = theano.function([self.energyfn.x,self.energyfn.h],
+                                       [self.energyfn.h-self.energyfn.sigma**2 * self.energyfn.dEdh])
 
           self.update_h = theano.function(
               [self.index], [self.energyfn.new_h],
@@ -389,16 +466,19 @@ class EMdsm(EMmodels):
       def mainloop(self, max_epoch = 100, detailed_monitoring=False, burn_in=10, generate_burn_in=100,update_params_during_inference=0, plot_every=1000, plot_data_category = 'toy', plot_config = None):
          try:
            for e in xrange(max_epoch):
+              # make the noise deterministic epoch-wise
+              RNG.seed(max(np.random.RandomState(1364).randint(2 ** 15), 1))
               values = []
               costs = np.zeros(len(self.update_p_names))
               for k in xrange(self.n_batch):
                    # initial h is the state from the previous minibatch, which is probably better than random or 0
-                   #self.inferencer.reset_h(self.h, np.zeros((self.batchsize, self.energyfn.nh)))
+                   self.inferencer.reset_h(self.h, np.zeros((self.batchsize, self.energyfn.nh)))
                    if detailed_monitoring: 
                       print "x=",self.x.get_value()[0,:]
                       print "h=",self.h.get_value()[0,:]
                       print "costs (||dE/ds||^2,||dE/dx||^2,E) before inference:    ",self.costs(k)
                       print "params=",self.energyfn.params_monitor()
+                      print "batch=",k
                    #pdb.set_trace()
                    for t in xrange(burn_in):
                        if detailed_monitoring: print "t=",t
@@ -423,19 +503,23 @@ class EMdsm(EMmodels):
                   print self.update_p_names,costs
                   #self.print_monitor()
                   if plot_every>0 and (e % plot_every == 0 or e==max_epoch-1):
-                     old_corrupt_factor = self.energyfn.corrupt_factor.get_value()
-                     self.energyfn.corrupt_factor.set_value(1.)
-                     self.generated_x.set_value(np.random.uniform(-0.5,0.5,((self.batchsize, self.energyfn.nx))).astype(theano.config.floatX))
-                     self.h.set_value(np.random.uniform(-0.5,0.5,((self.batchsize, self.energyfn.nh))).astype(theano.config.floatX))
-                     previous_x = self.generated_x.get_value()
-                     sum_accept_freq = 0.
-                     for t in range(generate_burn_in):
-                         (accept_freq,)=self.inferencer.generate_step()
-                         sum_accept_freq=sum_accept_freq+accept_freq
-                     print "acceptance ratio=",sum_accept_freq/generate_burn_in
-                     new_x=self.generated_x.get_value()
-                     plot_generated_samples(previous_x,new_x,self.x.get_value(), plot_data_category, plot_config)
-                     self.energyfn.corrupt_factor.set_value(old_corrupt_factor)
+                     plot_energy_surface(self.inferencer)
+                     plot_reconstructions(self.inferencer,self.x.get_value())
+                     if generate_burn_in>0:
+                        old_corrupt_factor = self.energyfn.corrupt_factor.get_value()
+                        self.energyfn.corrupt_factor.set_value(1.)
+                        xx=np.random.uniform(-0.5,0.5,((self.batchsize, self.energyfn.nx)))
+                        self.generated_x.set_value(xx.astype(theano.config.floatX))
+                        self.h.set_value(np.random.uniform(-0.5,0.5,((self.batchsize, self.energyfn.nh))).astype(theano.config.floatX))
+                        previous_x = self.generated_x.get_value()
+                        sum_accept_freq = 0.
+                        for t in range(generate_burn_in):
+                            (accept_freq,)=self.inferencer.generate_step()
+                            sum_accept_freq=sum_accept_freq+accept_freq
+                        print "acceptance ratio=",sum_accept_freq/generate_burn_in
+                        new_x=self.generated_x.get_value()
+                        plot_generated_samples(previous_x,new_x,self.x.get_value(), plot_data_category, plot_config)
+                        self.energyfn.corrupt_factor.set_value(old_corrupt_factor)
          except (KeyboardInterrupt, EOFError):
             pass
 
@@ -510,12 +594,12 @@ def exp2():
     plotting = True
 
     if plotting:
-       mp.ion()
-       plot_every=1000
+       #mp.ion()
+       plot_every=5000
     else:
        plot_every=0
 
-    n_examples = 100
+    n_examples = 300
     means = [[-1.5, 0],[0,4],[0,0]]
     covs = [[[0.02, -.3],[.11, -.3]],[[1.01,.99],[.99,1.01]],[[1.05,-.95],[-.95,1.05]]]
     weights = [.15,.5,.35]
@@ -530,15 +614,16 @@ def exp2():
     max_epoch = 30000
     batchsize = n_examples
     nx, nh = 2, 3
-    sigma = 0.5
+    sigma = 0.05
 
     #energyfn = GaussianEnergy(nx, nh, sigma=sigma)
-    energyfn = NeuroEnergy(nx, nh, sigma=sigma, corrupt_factor=1e-20)
-    #opt = adam()
-    opt = sgd(0.0001)
+    energyfn = NeuroEnergy(nx, nh, sigma=sigma, corrupt_factor=1)
+    opt = adam()
+    #opt = sgd(0)
     inferencer = LangevinEMinferencer(energyfn,n_inference_it=1)
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
-    model.mainloop(max_epoch,update_params_during_inference=0,detailed_monitoring=False, burn_in=50, generate_burn_in=200, plot_every=plot_every)
+    plot_energy_surface(inferencer)
+    model.mainloop(max_epoch,update_params_during_inference=0,detailed_monitoring=False, burn_in=10, generate_burn_in=0, plot_every=plot_every)
     mp.ioff()
 
 
