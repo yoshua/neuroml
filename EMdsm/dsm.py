@@ -27,8 +27,8 @@ def pp(s,x) :
     return x
 
  
-#RNG = MRG_RandomStreams(max(np.random.RandomState(1364).randint(2 ** 15), 1))
-RNG = RandomStreams(max(np.random.RandomState(1364).randint(2 ** 15), 1))
+RNG = MRG_RandomStreams(max(np.random.RandomState(1364).randint(2 ** 15), 1))
+#RNG = RandomStreams(max(np.random.RandomState(1364).randint(2 ** 15), 1))
 def gaussian(x, std, rng=RNG) : return x + rng.normal(std=std, size=x.shape, dtype=x.dtype)
 
 class adam(object):
@@ -126,7 +126,7 @@ def get_ll(x, parzen, batch_size=10):
 
     return numpy.array(lls)
 
-def displaynetwork(data, nx, ny, width) :
+def displaynetwork(data, nx, ny, width, filename) :
     i = 0
     data_ = np.zeros((nx*width, ny*width))
     for x in range(nx) :
@@ -135,7 +135,7 @@ def displaynetwork(data, nx, ny, width) :
             i += 1
     #plt.rcParams['figure.figsize'] = (16,16)
     mp.imshow(data_, cmap = cm.Greys_r)
-    mp.savefig('test.png')
+    mp.savefig(filename)
 
 def plot_generated_samples(prev_x,x,data, data_category = 'toy', plot_config = None):
     if data_category is 'toy':
@@ -155,7 +155,12 @@ def plot_generated_samples(prev_x,x,data, data_category = 'toy', plot_config = N
 
     if data_category is 'mnist':
         (nx, ny, width) = plot_config
-        displaynetwork(x, nx, ny, width) 
+        displaynetwork(x, nx, ny, width,"samples.png")
+
+def plot_filters(w,plot_config=None):
+    (nx, ny, width) = plot_config
+    displaynetwork(w.T,nx,ny, width,"filters.png")
+    
 
 def plot_energy_surface(energyfn):
     from mpl_toolkits.mplot3d import Axes3D
@@ -221,15 +226,15 @@ class EnergyFn(object):
           self.reconstructions = theano.function([self.x],[self.x_n,self.Rx_n])
 
           # to implement Langevin MCMC with rejection
-          # u0 from HMC  with rho=sqrt(2)*sigma
+          # u0 from HMC  with rho=sqrt(2)*self.sigma
           self.ustar_x = pp("ustart_x:",gaussian(0.*self.x, 1))
-          self.u0_x = pp("u0_x:",self.ustar_x-np.sqrt(2.)*self.sigma*self.dEdx)
-          self.x1_x = pp("x1_x:",self.x-np.sqrt(2.)*self.sigma*self.u0_x)
+          self.u0_x = pp("u0_x:",self.ustar_x-self.sigma/np.sqrt(2.)*self.dEdx)
+          self.x1_x = pp("x1_x:",self.x+np.sqrt(2.)*self.sigma*self.u0_x)
           self.E_x1 = pp("E_x1:",self.total_E_lambda(self.x1_x))
-          self.u1_x = pp("u1_x:", self.u0_x - np.sqrt(2)*self.sigma*T.grad(self.E_x1, self.x1_x))
+          self.u1_x = pp("u1_x:", self.u0_x - self.sigma/np.sqrt(2)*T.grad(self.E_x1, self.x1_x))
           self.energy_difference = self.elementwise_E - self.elementwise_E_lambda(self.x1_x)
-          self.log_proposal_diff = -0.5*(T.sum(self.u1_x*self.u1_x,axis=1))
-          self.accept_prob = T.minimum(1.,0.9+T.exp(self.energy_difference+self.log_proposal_diff))
+          self.log_proposal_diff = -0.5*(T.sum(self.u1_x*self.u1_x,axis=1)-T.sum(self.ustar_x*self.ustar_x,axis=1))
+          self.accept_prob = T.minimum(1.,T.exp(self.energy_difference+self.log_proposal_diff))
           self.accept = (RNG.binomial(size=self.accept_prob.shape,n=1,p=self.accept_prob,dtype=self.accept_prob.dtype)).reshape((-1, 1))
           #self.accept = T.addbroadcast(self.accept, 1)
           self.generated_x = self.accept*self.x1_x+(1.-self.accept)*self.x
@@ -368,6 +373,8 @@ class dsm:
                         print "acceptance ratio=",sum_accept_freq/generate_burn_in
                         new_x=self.generated_x.get_value()
                         plot_generated_samples(previous_x,new_x,self.x.get_value(), plot_data_category, plot_config)
+                        if plot_data_category is 'mnist':
+                           plot_filters(self.energyfn.w.get_value(), plot_config)
                         self.energyfn.corrupt_factor.set_value(old_corrupt_factor)
          except (KeyboardInterrupt, EOFError):
             pass
@@ -455,7 +462,7 @@ def exp_mnist():
 
     def prep(x):
         # just add any preprocess you want
-        return sharedX(x/np.max(np.abs(x)))
+        return sharedX((x-0.5))
 
     train_x, valid_x, test_x = prep(train_x), prep(valid_x), prep(test_x)
 
@@ -465,7 +472,7 @@ def exp_mnist():
     max_epoch = 20000
     batchsize = 256
     nx = 784
-    sigma = 0.1
+    sigma = 0.03
     nh = 200
 
     energyfn = AutoEncoderEnergy(nx, nh, sigma=sigma, corrupt_factor=1)
@@ -474,11 +481,27 @@ def exp_mnist():
     model = dsm(train_x, batchsize, energyfn, opt)
     model.mainloop(max_epoch,
                    detailed_monitoring=False,
-                   plot_every=20,
+                   plot_every=5,
+                   generate_burn_in=50,
                    plot_data_category='mnist',
                    plot_config = [10, 10, 28])
 
+def exp_mnist_dae():
+    path = 'mnist.pkl' 
+    (train_x, train_y), (valid_x, valid_y), (test_x, test_y) = np.load(path)
 
+    def prep(x):
+        # just add any preprocess you want
+        return sharedX((x-0.5))
+
+    train_x, valid_x, test_x = prep(train_x), prep(valid_x), prep(test_x)
+
+    x=train_x.get_value()
+    max_epoch = 20000
+    batchsize = 256
+    nx = 784
+    nh = 200
+        
 
 def plot_energy():
     # information about x
