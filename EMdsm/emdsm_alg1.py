@@ -27,8 +27,8 @@ def pp(s,x) :
     return x
 
  
-#RNG = MRG_RandomStreams(max(np.random.RandomState(1364).randint(2 ** 15), 1))
-RNG = RandomStreams(max(np.random.RandomState(1364).randint(2 ** 15), 1))
+RNG = MRG_RandomStreams(max(np.random.RandomState(1364).randint(2 ** 15), 1))
+#RNG = RandomStreams(max(np.random.RandomState(1364).randint(2 ** 15), 1))
 def gaussian(x, std, rng=RNG) : return x + rng.normal(std=std, size=x.shape, dtype=x.dtype)
 
 class adam(object):
@@ -99,7 +99,7 @@ class sgd(object):
           return self.updates
  
       def update(self,theta,gradient,aux):
-          return (theta-self.lrate*gradient, aux)
+          return (pp("new theta:",theta-self.lrate*pp("g:",gradient)), aux)
 
       def initialize_aux(self,shape):
           return ()
@@ -126,7 +126,7 @@ def get_ll(x, parzen, batch_size=10):
 
     return numpy.array(lls)
 
-def displaynetwork(data, nx, ny, width) :
+def displaynetwork(data, nx, ny, width, filename) :
     i = 0
     data_ = np.zeros((nx*width, ny*width))
     for x in range(nx) :
@@ -135,7 +135,7 @@ def displaynetwork(data, nx, ny, width) :
             i += 1
     #plt.rcParams['figure.figsize'] = (16,16)
     mp.imshow(data_, cmap = cm.Greys_r)
-    mp.savefig('test.png')
+    mp.savefig(filename)
 
 def plot_generated_samples(prev_x,x,data, data_category = 'toy', plot_config = None):
     if data_category is 'toy':
@@ -155,7 +155,12 @@ def plot_generated_samples(prev_x,x,data, data_category = 'toy', plot_config = N
 
     if data_category is 'mnist':
         (nx, ny, width) = plot_config
-        displaynetwork(x, nx, ny, width) 
+        displaynetwork(x, nx, ny, width,"samples.png")
+
+def plot_filters(w,plot_config=None):
+    (nx, ny, width) = plot_config
+    displaynetwork(w.T,nx,ny, width,"filters.png")
+    
 
 def plot_energy_surface(inferencer):
     from mpl_toolkits.mplot3d import Axes3D
@@ -211,7 +216,7 @@ class LatentEnergyFn(object):
           self.h_n = pp("h_n:",self.h + self.noise_h)
           self.delta_factor = np.asarray(delta_factor, dtype=theano.config.floatX)
           # subclasss must define 
-          #  self.E as a function mapping Theano variable for the state to a Theano variable for the energy
+          #  self.elementwise_E_lambda as a function mapping Theano variable for the state to a Theano variable for the energy
           #  self.param as a Theano shared variable for the parameters
 
       def set_rest(self):
@@ -238,6 +243,8 @@ class LatentEnergyFn(object):
 
           # to visualize reconstructions
           self.reconstructions = theano.function([self.x,self.h],[self.x_n,self.Rx_n])
+          self.Rx_fn = theano.function([self.x,self.h],[self.Rx])
+          self.Rxn_fn = theano.function([self.x,self.h],[self.Rx_n])
 
           # to implement Langevin MCMC with rejection
           # u0 from HMC  with rho=sqrt(2)*sigma
@@ -303,47 +310,23 @@ class NeuroEnergy(LatentEnergyFn):
          self.b_x = sharedX(np.zeros(nx))
          r = initwsigma/max(nx,nh)
          self.w = sharedX(np.random.uniform(-r,r,(nx,nh)))
-         #self.w = sharedX([[3.],[3.]])
-         self.params = [self.w, self.b_h, self.b_x, self.pp_h, self.pp_x]
-
-         self.elementwise_E_lambda = lambda x,h:\
-                              0.5*(T.sum(x*x*self.p_x,axis=1)+T.sum(h*h*self.p_h,axis=1))\
-                              - T.sum(rho(h)*T.dot(rho(x),self.w),axis=1) \
-                              - T.dot(rho(h), self.b_h) - T.dot(rho(x), self.b_x)
-
-         self.set_rest()
-         self.monitor = theano.function([], self.params)
-
-      def params_monitor(self):
-          return ["w","b_h","b_x","pp_h","pp_x",self.monitor()]
-
-
-class VisibleNeuroEnergy(LatentEnergyFn):
-      def __init__(self, nx, nh, sigma=0.01, inithsigma=.1, initxsigma=.1, initwsigma=.1, corrupt_factor=1.):
-         super(NeuroEnergy, self).__init__(sigma, nx, nh,corrupt_factor) 
-         self.pp_h = sharedX(np.abs(np.random.normal(0,inithsigma,nh)))
-         self.p_h = 1+1e-10*sigmoid(self.pp_h)
-         self.b_h = sharedX(np.zeros(nh))
-         self.pp_x = sharedX(np.abs(np.random.normal(0,initxsigma,nx)))
-         self.p_x = 1+1e-10*sigmoid(self.pp_x)
-         self.b_x = sharedX(np.zeros(nx))
-         r = initwsigma/max(nx,nh)
-         self.w = sharedX(np.random.uniform(-r,r,(nx,nh)))
          self.wx = sharedX(np.random.uniform(-r,r,(nx,nx)))
+         self.wh = sharedX(np.random.uniform(-r,r,(nh,nh)))
          #self.w = sharedX([[3.],[3.]])
-         self.params = [self.w, self.b_h, self.b_x, self.pp_h, self.pp_x, self.wx]
+         self.params = [self.w, self.b_h, self.b_x, self.pp_h, self.pp_x, self.wx, self.wh]
 
          self.elementwise_E_lambda = lambda x,h:\
                               0.5*(T.sum(x*x*self.p_x,axis=1)+T.sum(h*h*self.p_h,axis=1))\
                               - T.sum(rho(h)*T.dot(rho(x),self.w),axis=1) \
                               - T.sum(rho(x)*T.dot(rho(x),self.wx),axis=1) \
+                              - T.sum(rho(h)*T.dot(rho(h),self.wh),axis=1) \
                               - T.dot(rho(h), self.b_h) - T.dot(rho(x), self.b_x)
 
          self.set_rest()
          self.monitor = theano.function([], self.params)
 
       def params_monitor(self):
-          return ["w","b_h","b_x","pp_h","pp_x","wx",self.monitor()]
+          return ["w","b_h","b_x","pp_h","pp_x","wx","wh",self.monitor()]
 
 
 class EMinferencer(object):
@@ -431,12 +414,12 @@ class EMdsm(EMmodels):
           self.index = T.iscalar()
           self.update_p_names = ["cost","reconstruction_cost","E"]
           self.update_p = theano.function(
-               [self.index], [self.cost/minibatchsize,self.reconstruction_cost/minibatchsize,self.energyfn.E/minibatchsize],
+               [self.index], [self.cost,self.reconstruction_cost,self.energyfn.E/minibatchsize],
                updates = self.optimizer.get_updates(),
                givens = {self.energyfn.x : x[self.index*self.batchsize : (self.index+1)*self.batchsize], 
                          self.energyfn.h : self.h})
           self.costs = theano.function(
-               [self.index], [self.cost/minibatchsize,self.reconstruction_cost/minibatchsize,self.energyfn.E/minibatchsize],
+               [self.index], [self.cost,self.reconstruction_cost,self.energyfn.E/minibatchsize],
                givens = {self.energyfn.x : x[self.index*self.batchsize : (self.index+1)*self.batchsize], 
                          self.energyfn.h : self.h})
 
@@ -452,6 +435,10 @@ class EMdsm(EMmodels):
                [self.index], [self.energyfn.E],
                givens = {self.energyfn.x : x[self.index*self.batchsize : (self.index+1)*self.batchsize], self.energyfn.h : self.h})
                
+          self.generate_step = theano.function([ ],[self.energyfn.accept.mean()],
+                                updates = [(self.generated_x,self.energyfn.generated_x)],
+                                givens = {self.energyfn.x : self.generated_x, self.energyfn.h : self.h})
+
       # seems not used
       def reset_x(self, x):
           self.x = x
@@ -463,7 +450,8 @@ class EMdsm(EMmodels):
               values.append(v)
           return v,values
 
-      def mainloop(self, max_epoch = 100, detailed_monitoring=False, burn_in=10, generate_burn_in=100,update_params_during_inference=0, plot_every=1000, plot_data_category = 'toy', plot_config = None):
+      def mainloop(self, max_epoch = 100, detailed_monitoring=False, burn_in=10, generate_burn_in=100,update_params_during_inference=0, 
+                   plot_every=1000, plot_data_category = 'toy', plot_config = None, Langevin=False):
          try:
            for e in xrange(max_epoch):
               # make the noise deterministic epoch-wise
@@ -497,7 +485,7 @@ class EMdsm(EMmodels):
                    values.append(list)
                    if detailed_monitoring: print "costs (||dE/ds||^2,||dE/dx||^2,E) after params update: ",self.costs(k)
               costs *= 1./self.n_batch
-              if e % min(plot_every,100) == 0 or e==max_epoch-1:
+              if e % min(plot_every,1) == 0 or e==max_epoch-1:
                   print "epoch = ", e
                   #print self.update_p_names,costs,"params=",self.energyfn.params_monitor()
                   print self.update_p_names,costs
@@ -520,6 +508,8 @@ class EMdsm(EMmodels):
                         print "acceptance ratio=",sum_accept_freq/generate_burn_in
                         new_x=self.generated_x.get_value()
                         plot_generated_samples(previous_x,new_x,self.x.get_value(), plot_data_category, plot_config)
+                        if plot_data_category is 'mnist':
+                           plot_filters(self.energyfn.w.get_value(), plot_config)
                         self.energyfn.corrupt_factor.set_value(old_corrupt_factor)
          except (KeyboardInterrupt, EOFError):
             pass
@@ -596,7 +586,7 @@ def exp2():
 
     if plotting:
        #mp.ion()
-       plot_every=5000
+       plot_every=100
     else:
        plot_every=0
 
@@ -614,29 +604,32 @@ def exp2():
     #mp.show()
     max_epoch = 30000
     batchsize = n_examples
-    nx, nh = 2, 3
-    sigma = 0.05
+    nx, nh = 2, 5
+    sigma = 0.1
 
     #energyfn = GaussianEnergy(nx, nh, sigma=sigma)
     energyfn = NeuroEnergy(nx, nh, sigma=sigma, corrupt_factor=1)
     opt = adam()
-    #opt = sgd(0)
+    #opt = sgd(0.0001)
     inferencer = LangevinEMinferencer(energyfn,n_inference_it=1)
     model = EMdsm(train_x, batchsize, energyfn, opt, inferencer)
     plot_energy_surface(inferencer)
-    model.mainloop(max_epoch,update_params_during_inference=0,detailed_monitoring=False, burn_in=10, generate_burn_in=0, plot_every=plot_every)
+    model.mainloop(max_epoch,update_params_during_inference=0,detailed_monitoring=False, burn_in=10, generate_burn_in=10, plot_every=plot_every)
     mp.ioff()
 
 
 def exp_mnist():
     # information about x
     # MNIST
-    path = '/data/lisa/data/mnist/mnist.pkl' 
+    #path = '/data/lisa/data/mnist/mnist.pkl' 
+    path = 'mnist.pkl' 
     (train_x, train_y), (valid_x, valid_y), (test_x, test_y) = np.load(path)
+    # only model digit 7
+    train_x = train_x[train_y==7]
 
     def prep(x):
-        # just add any preprocess you want
-        return sharedX(x/np.max(np.abs(x)))
+        # put in range (-.5,.5):
+        return sharedX(x-0.5)
 
     train_x, valid_x, test_x = prep(train_x), prep(valid_x), prep(test_x)
 
@@ -657,9 +650,10 @@ def exp_mnist():
     model.mainloop(max_epoch,update_params_during_inference=0,
                    detailed_monitoring=False,
                    burn_in=10,
-                   plot_every=5000,
+                   generate_burn_in=50,
+                   plot_every=5,
                    plot_data_category='mnist',
-                   plot_config = [10, 10, 28])
+                   plot_config = [10, 10, 28], Langevin=False)
 
 
 
@@ -725,7 +719,7 @@ def plot_energy():
 
     
 if __name__ == "__main__":
-    #exp_mnist()
-    exp2() 
+    exp_mnist()
+    #exp2() 
     #plot_energy()
 
