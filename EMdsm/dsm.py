@@ -224,6 +224,8 @@ class EnergyFn(object):
 
           # to visualize reconstructions
           self.reconstructions = theano.function([self.x],[self.x_n,self.Rx_n])
+          self.Rx_fn = theano.function([self.x],[self.Rx])
+          self.Rxn_fn = theano.function([self.x],[self.Rx_n])
 
           # to implement Langevin MCMC with rejection
           # u0 from HMC  with rho=sqrt(2)*self.sigma
@@ -336,7 +338,8 @@ class dsm:
               values.append(v)
           return v,values
 
-      def mainloop(self, max_epoch = 100, detailed_monitoring=False, generate_burn_in=100, plot_every=1000, plot_data_category = 'toy', plot_config = None):
+      def mainloop(self, max_epoch = 100, detailed_monitoring=False, generate_burn_in=100, plot_every=1000, 
+                   plot_data_category = 'toy', plot_config = None, Langevin=True):
          try:
            for e in xrange(max_epoch):
               # make the noise deterministic epoch-wise
@@ -368,8 +371,11 @@ class dsm:
                         self.generated_x.set_value(previous_x.astype(theano.config.floatX))
                         sum_accept_freq = 0.
                         for t in range(generate_burn_in):
-                            (accept_freq,)=self.generate_step()
-                            sum_accept_freq=sum_accept_freq+accept_freq
+                            if Langevin:
+                               (accept_freq,)=self.generate_step()
+                               sum_accept_freq=sum_accept_freq+accept_freq
+                            else:
+                                self.generated_x.set_value(self.energyfn.Rxn_fn(self.generated_x.get_value())[0])
                         print "acceptance ratio=",sum_accept_freq/generate_burn_in
                         new_x=self.generated_x.get_value()
                         plot_generated_samples(previous_x,new_x,self.x.get_value(), plot_data_category, plot_config)
@@ -459,32 +465,35 @@ def exp_mnist():
     path = '/data/lisa/data/mnist/mnist.pkl' 
     path = 'mnist.pkl' 
     (train_x, train_y), (valid_x, valid_y), (test_x, test_y) = np.load(path)
+    # only model digit 7
+    train_x = train_x[train_y==7]
 
     def prep(x):
         # just add any preprocess you want
         return sharedX((x-0.5))
 
-    train_x, valid_x, test_x = prep(train_x), prep(valid_x), prep(test_x)
+    train_x = prep(train_x)
 
-    x=train_x.get_value()
-    print x.shape
+    #x=train_x.get_value()
+    #print x.shape
     #mp.show()
     max_epoch = 20000
     batchsize = 256
     nx = 784
-    sigma = 0.03
-    nh = 200
+    sigma = 0.1
+    nh = 500
 
-    energyfn = AutoEncoderEnergy(nx, nh, sigma=sigma, corrupt_factor=1)
+    #energyfn = AutoEncoderEnergy(nx, nh, sigma=sigma, corrupt_factor=1)
+    energyfn = NeuroEnergy(nx, sigma=sigma, corrupt_factor=1)
     opt = adam()
-    #opt = sgd(.1)
+    #opt = sgd(.001)
     model = dsm(train_x, batchsize, energyfn, opt)
     model.mainloop(max_epoch,
                    detailed_monitoring=False,
                    plot_every=5,
                    generate_burn_in=50,
                    plot_data_category='mnist',
-                   plot_config = [10, 10, 28])
+                   plot_config = [10, 10, 28], Langevin=False)
 
 def exp_mnist_dae():
     path = 'mnist.pkl' 
