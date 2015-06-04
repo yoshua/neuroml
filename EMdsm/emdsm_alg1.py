@@ -243,18 +243,18 @@ class LatentEnergyFn(object):
           # u0 from HMC  with rho=sqrt(2)*sigma
           self.ustar_x = pp("ustart_x:",gaussian(0.*self.x, 1))
           self.ustar_h = pp("ustart_h:",gaussian(0.*self.h, 1))
-          self.u0_x = pp("u0_x:",self.ustar_x-np.sqrt(2.)*self.sigma*self.dEdx)
-          self.u0_h = pp("u0_x:",self.ustar_h-np.sqrt(2.)*self.sigma*self.dEdh)
-          self.x1_x = pp("x1_x:",self.x-np.sqrt(2.)*self.sigma*self.u0_x)
-          self.x1_h = pp("x1_h:",self.h-np.sqrt(2.)*self.sigma*self.u0_h)
+          self.u0_x = pp("u0_x:",self.ustar_x-self.sigma/np.sqrt(2.)*self.dEdx)
+          self.u0_h = pp("u0_h:",self.ustar_h-self.sigma/np.sqrt(2.)*self.dEdh)
+          self.x1_x = pp("x1_x:",self.x+np.sqrt(2.)*self.sigma*self.u0_x)
+          self.x1_h = pp("x1_h:",self.h+np.sqrt(2.)*self.sigma*self.u0_h)
           self.E_x1 = pp("E_x1:",self.total_E_lambda(self.x1_x,self.x1_h))
-          self.u1_x = pp("u1_x:", self.u0_x - np.sqrt(2)*self.sigma*T.grad(self.E_x1, self.x1_x))
-          self.u1_h = pp("u1_h:", self.u0_h - np.sqrt(2)*self.sigma*T.grad(self.E_x1, self.x1_h))
+          self.u1_x = pp("u1_x:", self.u0_x - self.sigma/np.sqrt(2)*T.grad(self.E_x1, self.x1_x))
+          self.u1_h = pp("u1_h:", self.u0_h - self.sigma/np.sqrt(2)*T.grad(self.E_x1, self.x1_h))
           self.energy_difference = self.elementwise_E - self.elementwise_E_lambda(self.x1_x,self.x1_h)
-          self.log_proposal_diff = -0.5*(T.sum(self.u1_x*self.u1_x,axis=1)+T.sum(self.u1_h*self.u1_h,axis=1))
+          self.log_proposal_diff = -0.5*(T.sum(self.u1_x*self.u1_x,axis=1)+T.sum(self.u1_h*self.u1_h,axis=1)
+                                        -T.sum(self.ustar_x*self.ustar_x,axis=1)+T.sum(self.ustar_h*self.ustar_h,axis=1))
           self.accept_prob = T.minimum(1.,T.exp(self.energy_difference+self.log_proposal_diff))
           self.accept = (RNG.binomial(size=self.accept_prob.shape,n=1,p=self.accept_prob,dtype=self.accept_prob.dtype)).reshape((-1, 1))
-          #self.accept = T.addbroadcast(self.accept, 1)
           self.generated_x = self.accept*self.x1_x+(1.-self.accept)*self.x
           self.generated_h = self.accept*self.x1_h+(1.-self.accept)*self.h
 
@@ -416,8 +416,8 @@ class EMdsm(EMmodels):
           self.generated_x = sharedX(np.random.normal(0,0.3,((self.batchsize, self.energyfn.nx))))
 
           # set cost
-          self.reconstruction_cost = T.sum(self.energyfn.delta_x**2)
-          self.cost = self.reconstruction_cost + T.sum(self.energyfn.delta_h**2) + self.energyfn.penalty()
+          self.reconstruction_cost = T.sum(self.energyfn.delta_x**2)/minibatchsize
+          self.cost = self.reconstruction_cost + T.sum(self.energyfn.delta_h**2)/minibatchsize + self.energyfn.penalty()
 
           # set optimizer
           self.optimizer = optimizer
@@ -503,8 +503,9 @@ class EMdsm(EMmodels):
                   print self.update_p_names,costs
                   #self.print_monitor()
                   if plot_every>0 and (e % plot_every == 0 or e==max_epoch-1):
-                     plot_energy_surface(self.inferencer)
-                     plot_reconstructions(self.inferencer,self.x.get_value())
+                     if plot_data_category=='toy':
+                        plot_energy_surface(self.inferencer)
+                        plot_reconstructions(self.inferencer,self.x.get_value())
                      if generate_burn_in>0:
                         old_corrupt_factor = self.energyfn.corrupt_factor.get_value()
                         self.energyfn.corrupt_factor.set_value(1.)
