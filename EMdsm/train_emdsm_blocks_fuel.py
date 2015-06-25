@@ -1,0 +1,77 @@
+import logging
+from collections import OrderedDict
+
+import numpy
+import theano
+from blocks.algorithms import GradientDescent, Adam
+from blocks.extensions import FinishAfter, Timing, Printing
+from blocks.graph import ComputationGraph
+from blocks.initialization import IsotropicGaussian
+from blocks.main_loop import MainLoop
+from blocks.model import Model
+from blocks.utils import shared_floatx_zeros
+from fuel.streams import DataStream
+from fuel.schemes import ShuffledScheme
+from theano import tensor
+
+from emdsm_blocks_fuel import FivEM, Toy2DGaussianDataset, Repeat
+
+
+def create_main_loop():
+    seed = 188229
+    batch_size = 128
+    num_epochs = 1000
+    num_examples = 10 * batch_size
+    num_times = 5
+    mean = numpy.array([0, 0])
+    covariance_matrix = numpy.array([[3.0, 1.5],
+                                     [1.5, 1.0]])
+    nvis = len(mean)
+    nhid = 1
+
+    dataset = Toy2DGaussianDataset(mean, covariance_matrix, num_examples,
+                                   rng=numpy.random.RandomState(seed))
+    train_loop_stream = DataStream(
+        dataset=dataset,
+        iteration_scheme=Repeat(
+            ShuffledScheme(dataset.num_examples, batch_size), num_times))
+
+    model_brick = FivEM(
+        nvis=nvis, nhid=nhid, epsilon=1e-3, batch_size=batch_size,
+        weights_init=IsotropicGaussian(0.1))
+    model_brick.initialize()
+
+    x = tensor.matrix('features')
+
+    cost = model_brick.cost(x)
+    computation_graph = ComputationGraph([cost])
+    model = Model(cost)
+    step_rule = Adam(learning_rate=0.001, beta1=0.1, beta2=0.001, epsilon=1e-8,
+                     decay_factor=(1 - 1e-8))
+    algorithm = GradientDescent(
+        cost=cost, params=computation_graph.parameters, step_rule=step_rule)
+    algorithm.add_updates(computation_graph.updates)
+    extensions = [
+        Timing(),
+        FinishAfter(after_n_epochs=num_epochs),
+        Printing(after_epoch=False, every_n_epochs=100)
+    ]
+    main_loop = MainLoop(model=model, data_stream=train_loop_stream,
+                         algorithm=algorithm, extensions=extensions)
+    return main_loop
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    main_loop = create_main_loop()
+    main_loop.run()
+
+    model, = main_loop.model.top_bricks
+    x = shared_floatx_zeros((1000, 2))
+    h = shared_floatx_zeros((1000, 1))
+    new_x, new_h = model.langevin_update(x, h, update_x=True)
+    f = theano.function(
+        inputs=[], updates=OrderedDict([(x, new_x), (h, new_h)]))
+    for i in range(1000):
+        f()
+    print(numpy.cov(x.get_value(), rowvar=0))
