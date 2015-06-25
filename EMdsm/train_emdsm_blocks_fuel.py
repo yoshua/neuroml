@@ -10,8 +10,10 @@ from blocks.initialization import IsotropicGaussian
 from blocks.main_loop import MainLoop
 from blocks.model import Model
 from blocks.utils import shared_floatx_zeros
+from blocks.extensions.monitoring import DataStreamMonitoring
 from fuel.streams import DataStream
 from fuel.schemes import ShuffledScheme
+from fuel.datasets import MNIST
 from theano import tensor
 
 from emdsm_blocks_fuel import FivEM, Toy2DGaussianDataset, Repeat
@@ -20,21 +22,28 @@ from emdsm_blocks_fuel import FivEM, Toy2DGaussianDataset, Repeat
 def create_main_loop():
     seed = 188229
     batch_size = 128
-    num_epochs = 1000
+    num_epochs = 300
     num_examples = 10 * batch_size
-    num_times = 5
+    n_inference_steps = 5
     mean = numpy.array([0, 0])
     covariance_matrix = numpy.array([[3.0, 1.5],
                                      [1.5, 1.0]])
     nvis = len(mean)
-    nhid = 1
+    nhid = 3
 
     dataset = Toy2DGaussianDataset(mean, covariance_matrix, num_examples,
                                    rng=numpy.random.RandomState(seed))
+    #dataset = MNIST(("train",))
+
     train_loop_stream = DataStream(
         dataset=dataset,
         iteration_scheme=Repeat(
-            ShuffledScheme(dataset.num_examples, batch_size), num_times))
+            ShuffledScheme(dataset.num_examples, batch_size), n_inference_steps))
+
+    monitoring_stream = DataStream(
+        dataset=dataset,
+        iteration_scheme=Repeat(
+            ShuffledScheme(dataset.num_examples, batch_size), n_inference_steps))
 
     model_brick = FivEM(
         nvis=nvis, nhid=nhid, epsilon=1e-3, batch_size=batch_size,
@@ -54,7 +63,8 @@ def create_main_loop():
     extensions = [
         Timing(),
         FinishAfter(after_n_epochs=num_epochs),
-        Printing(after_epoch=False, every_n_epochs=100)
+        DataStreamMonitoring([cost],monitoring_stream),
+        Printing(after_epoch=False, every_n_epochs=1)
     ]
     main_loop = MainLoop(model=model, data_stream=train_loop_stream,
                          algorithm=algorithm, extensions=extensions)
@@ -67,8 +77,8 @@ if __name__ == "__main__":
     main_loop.run()
 
     model, = main_loop.model.top_bricks
-    x = shared_floatx_zeros((1000, 2))
-    h = shared_floatx_zeros((1000, 1))
+    x = shared_floatx_zeros((1000, model.nvis))
+    h = shared_floatx_zeros((1000, model.nhid))
     new_x, new_h = model.langevin_update(x, h, update_x=True)
     f = theano.function(
         inputs=[], updates=OrderedDict([(x, new_x), (h, new_h)]))
