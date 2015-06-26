@@ -2,8 +2,10 @@ from collections import OrderedDict
 from functools import partial
 
 import numpy
+import theano
 from blocks.bricks import Initializable, Random, Activation
 from blocks.bricks.base import application, lazy
+from blocks.extensions import SimpleExtension
 from blocks.initialization import Constant
 from blocks.roles import add_role, WEIGHT, BIAS
 from blocks.utils import shared_floatx_nans, dict_union
@@ -12,6 +14,42 @@ from fuel.schemes import IterationScheme
 from picklable_itertools import chain, repeat, imap
 from theano import tensor
 from theano.gradient import disconnected_grad
+
+
+class BurnIn(SimpleExtension):
+    """Resets FivEM's h and h_prev vars and performs a burn-in.
+
+    Parameters
+    ----------
+    model_brick : FivEM
+        FivEM model.
+    num_steps : int, optional
+        Number of burn-in steps. Default to 1.
+    """
+    def __init__(self, model_brick, num_steps=1, **kwargs):
+        super(BurnIn, self).__init__(**kwargs)
+        self.model_brick = model_brick
+        self.num_steps = num_steps
+        self._compile_update_function()
+
+    def _compile_update_function(self):
+        x = tensor.matrix('x')
+        self.update_function = theano.function(
+            inputs=[x],
+            updates=OrderedDict([
+                (self.model_brick.h_prev, self.model_brick.h),
+                (self.model_brick.h,
+                 self.model_brick.langevin_update(x, self.model_brick.h))]))
+
+    def do(self, which_callback, *args):
+        if which_callback == 'before_batch':
+            batch, = args
+            self.model_brick.h_prev.set_value(
+                0 * self.model_brick.h_prev.get_value())
+            self.model_brick.h.set_value(
+                0 * self.model_brick.h.get_value())
+            for i in range(self.num_steps):
+                self.update_function(batch)
 
 
 class Repeat(IterationScheme):
