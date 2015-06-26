@@ -23,7 +23,7 @@ from emdsm_blocks_fuel import FivEM, Toy2DGaussianDataset, Repeat
 def create_main_loop():
     seed = 188229
     batch_size = 256
-    num_epochs = 300
+    num_epochs = 10
     num_examples = 1 * batch_size
     n_inference_steps = 5
     mean = numpy.array([0, 0])
@@ -58,7 +58,7 @@ def create_main_loop():
     model = Model(cost)
     #step_rule = Adam(learning_rate=0.001, beta1=0.1, beta2=0.001, epsilon=1e-8,
     #                 decay_factor=(1 - 1e-8))
-    step_rule = Scale(learning_rate=0)
+    step_rule = Scale(learning_rate=1e-3)
     algorithm = GradientDescent(
         cost=cost, params=computation_graph.parameters, step_rule=step_rule)
     algorithm.add_updates(computation_graph.updates)
@@ -67,9 +67,9 @@ def create_main_loop():
         FinishAfter(after_n_epochs=num_epochs),
         DataStreamMonitoring([cost]+computation_graph.auxiliary_variables,
                              monitoring_stream,after_batch=True),
+        Printing(after_epoch=False, every_n_epochs=1,after_batch=False),
         SharedVariableModifier(model_brick.h_prev,lambda n_it,old_value: 0*old_value,every_n_batches=n_inference_steps, after_batch=False),
-        SharedVariableModifier(model_brick.h, lambda n_it,old_value: 0*old_value,every_n_batches=n_inference_steps, after_batch=False),
-        Printing(after_epoch=False, every_n_epochs=1,after_batch=True)
+        SharedVariableModifier(model_brick.h, lambda n_it,old_value: 0*old_value,every_n_batches=n_inference_steps, after_batch=False)
     ]
     main_loop = MainLoop(model=model, data_stream=train_loop_stream,
                          algorithm=algorithm, extensions=extensions)
@@ -77,8 +77,8 @@ def create_main_loop():
 
 
 if __name__ == "__main__":
-    #logging.basicConfig(level=logging.INFO,filename="train_emdsm.log",filemode='w')
-    logging.basicConfig(level=logging.DEBUG,filename="train_emdsm.log",filemode='w')
+    logging.basicConfig(level=logging.INFO,filename="train_emdsm.log")
+    #logging.basicConfig(level=logging.DEBUG,filename="train_emdsm.log",filemode='w')
     main_loop = create_main_loop()
     main_loop.run()
 
