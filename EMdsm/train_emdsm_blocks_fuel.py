@@ -62,14 +62,27 @@ def create_main_loop():
     algorithm = GradientDescent(
         cost=cost, params=computation_graph.parameters, step_rule=step_rule)
     algorithm.add_updates(computation_graph.updates)
+
+    def update_val(n_it, old_value):
+        if n_it % n_inference_steps:
+            return 0 * old_value
+        else:
+            return old_value
+
     extensions = [
         Timing(),
         FinishAfter(after_n_epochs=num_epochs),
         DataStreamMonitoring([cost]+computation_graph.auxiliary_variables,
                              monitoring_stream,after_batch=True),
-        Printing(after_epoch=False, every_n_epochs=1,after_batch=False),
-        SharedVariableModifier(model_brick.h_prev,lambda n_it,old_value: 0*old_value,every_n_batches=n_inference_steps, after_batch=False),
-        SharedVariableModifier(model_brick.h, lambda n_it,old_value: 0*old_value,every_n_batches=n_inference_steps, after_batch=False)
+        SharedVariableModifier(
+            model_brick.h_prev,
+            update_val,
+            after_batch=False, before_batch=True),
+        SharedVariableModifier(
+            model_brick.h,
+            update_val,
+            after_batch=False, before_batch=True),
+        Printing(after_epoch=False, every_n_epochs=1,after_batch=True)
     ]
     main_loop = MainLoop(model=model, data_stream=train_loop_stream,
                          algorithm=algorithm, extensions=extensions)
