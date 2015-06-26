@@ -63,11 +63,12 @@ def create_main_loop():
         cost=cost, params=computation_graph.parameters, step_rule=step_rule)
     algorithm.add_updates(computation_graph.updates)
     extensions = [
-        SharedVariableModifier(model_brick.h_prev,lambda n_it,old_value: 0*old_value,every_n_batches=n_inference_steps),
         Timing(),
         FinishAfter(after_n_epochs=num_epochs),
         DataStreamMonitoring([cost]+computation_graph.auxiliary_variables,
                              monitoring_stream,after_batch=True),
+        SharedVariableModifier(model_brick.h_prev,lambda n_it,old_value: 0*old_value,every_n_batches=n_inference_steps, after_batch=False),
+        SharedVariableModifier(model_brick.h, lambda n_it,old_value: 0*old_value,every_n_batches=n_inference_steps, after_batch=False),
         Printing(after_epoch=False, every_n_epochs=1,after_batch=True)
     ]
     main_loop = MainLoop(model=model, data_stream=train_loop_stream,
