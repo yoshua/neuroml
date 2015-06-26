@@ -92,7 +92,7 @@ class FivEM(Initializable, Random):
 
     """
     @lazy(allocation=['nvis', 'nhid'])
-    def __init__(self, nvis, nhid, epsilon, batch_size, **kwargs):
+    def __init__(self, nvis, nhid, epsilon, batch_size, noise_scaling=1., **kwargs):
         super(FivEM, self).__init__(**kwargs)
         self.nvis = nvis
         self.nhid = nhid
@@ -100,7 +100,10 @@ class FivEM(Initializable, Random):
         self.batch_size = batch_size
         self.h_init = Constant(0)
         self.h_prev_init = Constant(0)
+        self.energy_prev_init = Constant(0)
+        self.energy_new_init = Constant(0)
         self.rho = Rho()
+        self.noise_scaling = noise_scaling
         self.children = [self.rho]
 
     def _allocate(self):
@@ -110,12 +113,16 @@ class FivEM(Initializable, Random):
         self.h = shared_floatx_nans((self.batch_size, self.nhid), name='h')
         self.h_prev = shared_floatx_nans((self.batch_size, self.nhid),
                                          name='h_prev')
+        self.energy_prev = shared_floatx_nans((),name="energy_prev")
+        self.energy_new = shared_floatx_nans((),name="energy_new")
 
     def _initialize(self):
         W, = self.params
         self.weights_init.initialize(W, self.rng)
         self.h_init.initialize(self.h, self.rng)
         self.h_prev_init.initialize(self.h_prev, self.rng)
+        self.energy_prev_init.initialize(self.energy_prev, self.rng)
+        self.energy_new_init.initialize(self.energy_new, self.rng)
 
     @property
     def W(self):
@@ -169,7 +176,7 @@ class FivEM(Initializable, Random):
             Input.
 
         """
-        return var + 2 * self.epsilon * self.theano_rng.normal(
+        return var + 2 * self.epsilon * self.noise_scaling * self.theano_rng.normal(
             size=var.shape, dtype=var.dtype)
 
     @application(inputs=['x'], outputs=['value'])
@@ -192,9 +199,15 @@ class FivEM(Initializable, Random):
         h_prev = self.h_prev
         h = self.h
         h_next = disconnected_grad(self.langevin_update(x, h))
-        updates = OrderedDict([(h_prev, h), (h, h_next)])
+        old_energy = self.energy_prev
+        new_energy = self.energy(x,h_next).mean(dtype=old_energy.dtype)
+        delta_energy = old_energy - new_energy
+        updates = OrderedDict([(h_prev, h), (h, h_next),(self.energy_prev,self.energy_new),(self.energy_new,new_energy)])
         application_call.updates = dict_union(application_call.updates,
                                               updates)
+        application_call.add_auxiliary_variable(self.energy_prev, name="energy_prev")
+        application_call.add_auxiliary_variable(self.energy_new, name="energy_new")
+        application_call.add_auxiliary_variable(self.energy_prev - self.energy_new, name="energy_decrease")
         energy_sqrt = (h_next - h_prev + self.epsilon *
                        tensor.grad(self.energy(x, h_prev).sum(), h_prev))
         return tensor.dot(energy_sqrt, energy_sqrt.T).mean()
