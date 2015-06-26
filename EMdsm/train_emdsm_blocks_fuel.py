@@ -3,6 +3,7 @@ from collections import OrderedDict
 
 import numpy
 import theano
+import pdb
 from blocks.algorithms import GradientDescent, Adam, Scale
 from blocks.extensions import FinishAfter, Timing, Printing
 from blocks.extensions.training import SharedVariableModifier
@@ -23,19 +24,19 @@ from emdsm_blocks_fuel import FivEM, Toy2DGaussianDataset, Repeat
 def create_main_loop():
     seed = 188229
     batch_size = 256
-    num_epochs = 10
+    num_epochs = 100
     num_examples = 1 * batch_size
-    n_inference_steps = 5
+    n_inference_steps = 3
     mean = numpy.array([0, 0])
-    covariance_matrix = numpy.array([[3.0, 1.5],
-                                     [1.5, 1.0]])
+    covariance_matrix = 0.1*numpy.array([[3.0, 1.5],
+                                         [1.5, 1.0]])
     nvis = len(mean)
     nhid = 3
 
     dataset = Toy2DGaussianDataset(mean, covariance_matrix, num_examples,
                                    rng=numpy.random.RandomState(seed))
     #dataset = MNIST(("train",))
-
+    #pdb.set_trace()
     train_loop_stream = DataStream(
         dataset=dataset,
         iteration_scheme=Repeat(
@@ -48,7 +49,7 @@ def create_main_loop():
 
     model_brick = FivEM(
         nvis=nvis, nhid=nhid, epsilon=1e-3, batch_size=batch_size,
-        weights_init=IsotropicGaussian(0.1), noise_scaling=0.)
+        weights_init=IsotropicGaussian(0.1), noise_scaling=0.1)
     model_brick.initialize()
 
     x = tensor.matrix('features')
@@ -58,14 +59,14 @@ def create_main_loop():
     model = Model(cost)
     #step_rule = Adam(learning_rate=0.001, beta1=0.1, beta2=0.001, epsilon=1e-8,
     #                 decay_factor=(1 - 1e-8))
-    step_rule = Scale(learning_rate=1e-3)
+    step_rule = Scale(learning_rate=1e-6)
     algorithm = GradientDescent(
         cost=cost, params=computation_graph.parameters, step_rule=step_rule)
     algorithm.add_updates(computation_graph.updates)
 
     def update_val(n_it, old_value):
-        if n_it % n_inference_steps:
-            return 0 * old_value
+        if n_it % n_inference_steps == 0:
+            return 0 * old_value + 0.5
         else:
             return old_value
 
@@ -73,7 +74,7 @@ def create_main_loop():
         Timing(),
         FinishAfter(after_n_epochs=num_epochs),
         DataStreamMonitoring([cost]+computation_graph.auxiliary_variables,
-                             monitoring_stream,after_batch=True),
+                             monitoring_stream),
         SharedVariableModifier(
             model_brick.h_prev,
             update_val,
@@ -93,6 +94,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO,filename="train_emdsm.log")
     #logging.basicConfig(level=logging.DEBUG,filename="train_emdsm.log",filemode='w')
     main_loop = create_main_loop()
+
     main_loop.run()
 
     model, = main_loop.model.top_bricks

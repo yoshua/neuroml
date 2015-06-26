@@ -5,7 +5,7 @@ import numpy
 from blocks.bricks import Initializable, Random, Activation
 from blocks.bricks.base import application, lazy
 from blocks.initialization import Constant
-from blocks.roles import add_role, WEIGHT
+from blocks.roles import add_role, WEIGHT, BIAS
 from blocks.utils import shared_floatx_nans, dict_union
 from fuel.datasets import IndexableDataset
 from fuel.schemes import IterationScheme
@@ -98,6 +98,8 @@ class FivEM(Initializable, Random):
         self.nhid = nhid
         self.epsilon = epsilon
         self.batch_size = batch_size
+        self.b_init = Constant(0)
+        self.c_init = Constant(0)
         self.h_init = Constant(0)
         self.h_prev_init = Constant(0)
         self.energy_prev_init = Constant(0)
@@ -110,6 +112,12 @@ class FivEM(Initializable, Random):
         W = shared_floatx_nans((self.nvis, self.nhid), name='W')
         self.params.append(W)
         add_role(W, WEIGHT)
+        b = shared_floatx_nans((self.nhid), name='b')
+        self.params.append(b)
+        #add_role(b, BIAS)
+        c = shared_floatx_nans((self.nvis), name='c')
+        self.params.append(c)
+        #add_role(c, BIAS)
         self.h = shared_floatx_nans((self.batch_size, self.nhid), name='h')
         self.h_prev = shared_floatx_nans((self.batch_size, self.nhid),
                                          name='h_prev')
@@ -117,8 +125,10 @@ class FivEM(Initializable, Random):
         self.energy_new = shared_floatx_nans((),name="energy_new")
 
     def _initialize(self):
-        W, = self.params
+        W,b,c = self.params
         self.weights_init.initialize(W, self.rng)
+        self.b_init.initialize(b, self.rng)
+        self.c_init.initialize(c, self.rng)
         self.h_init.initialize(self.h, self.rng)
         self.h_prev_init.initialize(self.h_prev, self.rng)
         self.energy_prev_init.initialize(self.energy_prev, self.rng)
@@ -127,6 +137,14 @@ class FivEM(Initializable, Random):
     @property
     def W(self):
         return self.params[0]
+    
+    @property
+    def b(self):
+        return self.params[1]
+
+    @property
+    def c(self):
+        return self.params[2]
 
     def energy(self, x, h):
         """Computes the energy function.
@@ -140,8 +158,9 @@ class FivEM(Initializable, Random):
 
         """
         return (0.5 * (tensor.dot(x, x.T) + tensor.dot(h, h.T)) -
-                (tensor.dot(self.rho.apply(x), self.W) *
-                 self.rho.apply(h)).sum(axis=1))
+                (tensor.dot(self.rho.apply(x), self.W) * self.rho.apply(h)).sum(axis=1) +
+                 tensor.dot(self.rho.apply(x),self.c) + tensor.dot(self.rho.apply(h),self.b)
+                 )
 
     def langevin_update(self, x, h, update_x=False):
         """Computes state updates according to Langevin dynamics.
@@ -205,9 +224,17 @@ class FivEM(Initializable, Random):
         updates = OrderedDict([(h_prev, h), (h, h_next),(self.energy_prev,self.energy_new),(self.energy_new,new_energy)])
         application_call.updates = dict_union(application_call.updates,
                                               updates)
+        h_prediction_residual = (h_next - h_prev + self.epsilon *
+                                 tensor.grad(self.energy(x, h_prev).sum(), h_prev))
+        J_h = tensor.dot(h_prediction_residual, h_prediction_residual.T).mean()
+        x_prediction_residual = tensor.grad(self.energy(x, h_prev).sum(), x)
+        J_x = tensor.dot(x_prediction_residual,x_prediction_residual.T).mean()
         application_call.add_auxiliary_variable(self.energy_prev, name="energy_prev")
         application_call.add_auxiliary_variable(self.energy_new, name="energy_new")
         application_call.add_auxiliary_variable(self.energy_prev - self.energy_new, name="energy_decrease")
-        energy_sqrt = (h_next - h_prev + self.epsilon *
-                       tensor.grad(self.energy(x, h_prev).sum(), h_prev))
-        return tensor.dot(energy_sqrt, energy_sqrt.T).mean()
+        application_call.add_auxiliary_variable(J_x, name="J_x")
+        application_call.add_auxiliary_variable(J_h, name="J_h")
+        application_call.add_auxiliary_variable(self.W, name="W")
+        application_call.add_auxiliary_variable(self.b, name="b")
+        application_call.add_auxiliary_variable(self.c, name="c")
+        return J_x + J_h
