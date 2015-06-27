@@ -152,10 +152,10 @@ class FivEM(Initializable, Random):
         add_role(W, WEIGHT)
         b = shared_floatx_nans((self.nhid), name='b')
         self.params.append(b)
-        #add_role(b, BIAS)
+        add_role(b, BIAS)
         c = shared_floatx_nans((self.nvis), name='c')
         self.params.append(c)
-        #add_role(c, BIAS)
+        add_role(c, BIAS)
         self.h = shared_floatx_nans((self.batch_size, self.nhid), name='h')
         self.h_prev = shared_floatx_nans((self.batch_size, self.nhid),
                                          name='h_prev')
@@ -272,7 +272,8 @@ class FivEM(Initializable, Random):
         application_call.add_auxiliary_variable(self.energy_prev - self.energy_new, name="energy_decrease")
         application_call.add_auxiliary_variable(J_x, name="J_x")
         application_call.add_auxiliary_variable(J_h, name="J_h")
-        application_call.add_auxiliary_variable(self.W, name="W")
-        application_call.add_auxiliary_variable(self.b, name="b")
-        application_call.add_auxiliary_variable(self.c, name="c")
+        # YB: the lines below make blocks crash, not sure why
+        #application_call.add_auxiliary_variable(self.params[0], name="W")
+        #application_call.add_auxiliary_variable(self.params[1], name="b")
+        #application_call.add_auxiliary_variable(self.params[2], name="c")
         return J_x + J_h
