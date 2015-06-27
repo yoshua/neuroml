@@ -95,10 +95,12 @@ class Toy2DGaussianDataset(IndexableDataset):
     """
     _default_seed = 1234
 
-    def __init__(self, mean, covariance_matrix, num_examples, rng=None):
+    def __init__(self, mean, covariance_matrix, num_examples, squash=False, rng=None):
         if not rng:
             rng = numpy.random.RandomState(self._default_seed)
         data = rng.multivariate_normal(mean, covariance_matrix, num_examples)
+        if squash:
+            data = 0.5*numpy.tanh(-data)
         super(Toy2DGaussianDataset, self).__init__(
             indexables={'features': data})
 
@@ -272,6 +274,13 @@ class FivEM(Initializable, Random):
         application_call.add_auxiliary_variable(self.energy_prev - self.energy_new, name="energy_decrease")
         application_call.add_auxiliary_variable(J_x, name="J_x")
         application_call.add_auxiliary_variable(J_h, name="J_h")
+        application_call.add_auxiliary_variable(x*1, name="x")
+        application_call.add_auxiliary_variable(h_prev, name="h_prev")
+        application_call.add_auxiliary_variable(h, name="h")
+        application_call.add_auxiliary_variable(h_next, name="h_next")
+        application_call.add_auxiliary_variable(self.W*1., name="W")
+        application_call.add_auxiliary_variable(self.b*1, name="b")
+        application_call.add_auxiliary_variable(self.c*1, name="c")
         # YB: the lines below make blocks crash, not sure why
         #application_call.add_auxiliary_variable(self.params[0], name="W")
         #application_call.add_auxiliary_variable(self.params[1], name="b")

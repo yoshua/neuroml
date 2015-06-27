@@ -23,9 +23,9 @@ from emdsm_blocks_fuel import FivEM, Toy2DGaussianDataset, Repeat
 
 def create_main_loop():
     seed = 188229
-    batch_size = 256
-    num_epochs = 100
-    num_examples = 1 * batch_size
+    batch_size = 4
+    num_epochs = 20
+    num_examples = 2 * batch_size
     n_inference_steps = 3
     mean = numpy.array([0, 0])
     covariance_matrix = 0.1*numpy.array([[3.0, 1.5],
@@ -33,7 +33,7 @@ def create_main_loop():
     nvis = len(mean)
     nhid = 3
 
-    dataset = Toy2DGaussianDataset(mean, covariance_matrix, num_examples,
+    dataset = Toy2DGaussianDataset(mean, covariance_matrix, num_examples,squash=True,
                                    rng=numpy.random.RandomState(seed))
     #dataset = MNIST(("train",))
     #pdb.set_trace()
@@ -49,7 +49,7 @@ def create_main_loop():
 
     model_brick = FivEM(
         nvis=nvis, nhid=nhid, epsilon=1e-3, batch_size=batch_size,
-        weights_init=IsotropicGaussian(0.1), noise_scaling=0.1)
+        weights_init=IsotropicGaussian(0.1), noise_scaling=0)
     model_brick.initialize()
 
     x = tensor.matrix('features')
@@ -57,16 +57,16 @@ def create_main_loop():
     cost = model_brick.cost(x)
     computation_graph = ComputationGraph([cost])
     model = Model(cost)
-    #step_rule = Adam(learning_rate=0.001, beta1=0.1, beta2=0.001, epsilon=1e-8,
+    #step_rule = Adam(learning_rate=1e-3, beta1=0.1, beta2=0.001, epsilon=1e-8,
     #                 decay_factor=(1 - 1e-8))
-    step_rule = Scale(learning_rate=1e-6)
+    step_rule = Scale(learning_rate=0)
     algorithm = GradientDescent(
         cost=cost, params=computation_graph.parameters, step_rule=step_rule)
     algorithm.add_updates(computation_graph.updates)
 
     def update_val(n_it, old_value):
         if n_it % n_inference_steps == 0:
-            return 0 * old_value + 0.5
+            return 0 * old_value
         else:
             return old_value
 
@@ -74,7 +74,7 @@ def create_main_loop():
         Timing(),
         FinishAfter(after_n_epochs=num_epochs),
         DataStreamMonitoring([cost]+computation_graph.auxiliary_variables,
-                             monitoring_stream),
+                             monitoring_stream, after_batch=True),
         SharedVariableModifier(
             model_brick.h_prev,
             update_val,
