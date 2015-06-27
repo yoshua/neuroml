@@ -14,7 +14,7 @@ from blocks.model import Model
 from blocks.utils import shared_floatx_zeros
 from blocks.extensions.monitoring import DataStreamMonitoring
 from fuel.streams import DataStream
-from fuel.schemes import ShuffledScheme
+from fuel.schemes import ShuffledScheme,ConstantScheme,SequentialScheme
 from fuel.datasets import MNIST
 from theano import tensor
 
@@ -37,15 +37,18 @@ def create_main_loop():
                                    rng=numpy.random.RandomState(seed))
     #dataset = MNIST(("train",))
     #pdb.set_trace()
+    print dataset.indexables[0]
     train_loop_stream = DataStream(
         dataset=dataset,
         iteration_scheme=Repeat(
-            ShuffledScheme(dataset.num_examples, batch_size), n_inference_steps))
+#            ShuffledScheme(dataset.num_examples, batch_size), n_inference_steps))
+            SequentialScheme(dataset.num_examples, batch_size), n_inference_steps))
 
     monitoring_stream = DataStream(
         dataset=dataset,
         iteration_scheme=Repeat(
-            ShuffledScheme(dataset.num_examples, batch_size), n_inference_steps))
+            SequentialScheme(dataset.num_examples, batch_size), n_inference_steps))
+            #ShuffledScheme(dataset.num_examples, batch_size), n_inference_steps))
 
     model_brick = FivEM(
         nvis=nvis, nhid=nhid, epsilon=1e-3, batch_size=batch_size,
