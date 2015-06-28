@@ -131,10 +131,13 @@ class FivEM(Initializable, Random):
 
     """
     @lazy(allocation=['nvis', 'nhid'])
-    def __init__(self, nvis, nhid, epsilon, batch_size, noise_scaling=1., debug=0, **kwargs):
+    def __init__(self, nvis, nhid, epsilon, batch_size, noise_scaling=1.,
+                 lateral_x=False, lateral_h=False,debug=0, **kwargs):
         super(FivEM, self).__init__(**kwargs)
         self.nvis = nvis
         self.nhid = nhid
+        self.lateral_x = lateral_x
+        self.lateral_h = lateral_h
         self.epsilon = epsilon
         self.batch_size = batch_size
         self.b_init = Constant(0)
@@ -223,12 +226,16 @@ class FivEM(Initializable, Random):
         """
         rx = self.rho.apply(x)
         rh = self.rho.apply(h)
-        return (0.5 * (tensor.dot(x, x.T) + tensor.dot(h, h.T)) -
-                (tensor.dot(rx, self.Wxh) * rh).sum(axis=1) +
-                (tensor.dot(rx, self.Wxx) * rx).sum(axis=1) +
-                (tensor.dot(rh, self.Whh) * rh).sum(axis=1) +
+        energy = 0.5 * ((x*x).sum(axis=1) + (h*h).sum(axis=1)) - \
+                (tensor.dot(rx, tensor.tanh(self.Wxh)) * rh).sum(axis=1) - \
                 tensor.dot(rx,self.c) + tensor.dot(rh,self.b)
-               )
+        if self.lateral_x:
+            energy = energy + (tensor.dot(rx, tensor.tanh(self.Wxx)) * rx).sum(axis=1)
+        if self.lateral_h:
+            energy = energy + (tensor.dot(rh, tensor.tanh(self.Whh)) * rh).sum(axis=1)
+        return energy
+                
+                
 
     def langevin_update(self, x, h, update_x=False):
         """Computes state updates according to Langevin dynamics.
@@ -289,31 +296,33 @@ class FivEM(Initializable, Random):
                                                                 self.pp(h,"h",2))),
                         "h_next",2)
         old_energy = self.pp(self.energy_prev,"old_energy",2)
-        new_energy = self.pp(self.energy(x,h_next).mean(dtype=old_energy.dtype),"new_energy",1)
+        new_energy = self.pp(self.energy(x,h_next).sum(dtype=old_energy.dtype),"new_energy",1)
         delta_energy = self.pp(old_energy - new_energy,"delta_energy",1)
         updates = OrderedDict([(h_prev, h), (h, h_next),(self.energy_prev,self.energy_new),(self.energy_new,new_energy)])
         application_call.updates = dict_union(application_call.updates,
                                               updates)
         h_prediction_residual = (h_next - self.pp(h_prev,"h_prev",3) + self.epsilon *
                                  tensor.grad(self.energy(x, h_prev).sum(), h_prev))
-        J_h = self.pp(tensor.dot(h_prediction_residual, h_prediction_residual.T).mean(),"J_h",1)
-        x_prediction_residual = tensor.grad(self.energy(x, h_prev).sum(), x)
-        J_x = self.pp(tensor.dot(x_prediction_residual,x_prediction_residual.T).mean(),"J_x",1)
+        J_h = self.pp((h_prediction_residual*h_prediction_residual).sum(axis=1).mean(axis=0),"J_h",1)
+        x_prediction_residual = self.pp(tensor.grad(self.energy(x, h_prev).sum(), x),"x_residual",2)
+        J_x = self.pp((x_prediction_residual*x_prediction_residual).sum(axis=1).mean(axis=0),"J_x",1)
         ## the values printed using add_auxiliary_variables are not reliable, so use printing.Print instead
         #application_call.add_auxiliary_variable(self.energy_prev, name="energy_prev")
         #application_call.add_auxiliary_variable(self.energy_new, name="energy_new")
         #application_call.add_auxiliary_variable(self.energy_prev - self.energy_new, name="energy_decrease")
-        #application_call.add_auxiliary_variable(J_x, name="J_x")
-        #application_call.add_auxiliary_variable(J_h, name="J_h")
+        if self.debug>0:
+           application_call.add_auxiliary_variable(J_x, name="J_x")
+           application_call.add_auxiliary_variable(J_h, name="J_h")
         #application_call.add_auxiliary_variable(x*1, name="x")
         #application_call.add_auxiliary_variable(h_prev, name="h_prev")
         #application_call.add_auxiliary_variable(h, name="h")
         #application_call.add_auxiliary_variable(h_next, name="h_next")
-        application_call.add_auxiliary_variable(self.Wxh*1., name="Wxh")
-        application_call.add_auxiliary_variable(self.Whh*1., name="Whh")
-        application_call.add_auxiliary_variable(self.Wxx*1., name="Wxx")
-        application_call.add_auxiliary_variable(self.b*1, name="b")
-        application_call.add_auxiliary_variable(self.c*1, name="c")
+        if self.debug>1:
+           application_call.add_auxiliary_variable(self.Wxh*1., name="Wxh")
+           application_call.add_auxiliary_variable(self.Whh*1., name="Whh")
+           application_call.add_auxiliary_variable(self.Wxx*1., name="Wxx")
+           application_call.add_auxiliary_variable(self.b*1, name="b")
+           application_call.add_auxiliary_variable(self.c*1, name="c")
         # YB: the commented lines below make blocks crash, not sure why
         #application_call.add_auxiliary_variable(self.params[0], name="W")
         #application_call.add_auxiliary_variable(self.params[1], name="b")
