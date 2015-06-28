@@ -41,20 +41,20 @@ def create_main_loop():
        nhid = 4
        nvis = len(mean)
     else:
-       dataset = MNIST(("train",))
+       dataset = MNIST(("train",), sources=('features',))
        nhid = 100
        num_examples = dataset.num_examples
        batch_size = num_examples
        nvis = 784
 
-    train_loop_stream = DataStream(
+    train_loop_stream = DataStream.default_stream(
         dataset=dataset,
         iteration_scheme=SequentialScheme(dataset.num_examples, batch_size)
         #Repeat(
 #            ShuffledScheme(dataset.num_examples, batch_size), n_inference_steps))
             #, n_inference_steps)
             )
-    monitoring_stream = DataStream(
+    monitoring_stream = DataStream.default_stream(
         dataset=dataset,
         iteration_scheme=SequentialScheme(dataset.num_examples, batch_size)
             #Repeat(
