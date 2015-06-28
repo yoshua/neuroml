@@ -15,7 +15,6 @@ from picklable_itertools import chain, repeat, imap
 from theano import tensor
 from theano.gradient import disconnected_grad
 
-
 class BurnIn(SimpleExtension):
     """Resets FivEM's h and h_prev vars and performs a burn-in.
 
@@ -132,7 +131,7 @@ class FivEM(Initializable, Random):
 
     """
     @lazy(allocation=['nvis', 'nhid'])
-    def __init__(self, nvis, nhid, epsilon, batch_size, noise_scaling=1., **kwargs):
+    def __init__(self, nvis, nhid, epsilon, batch_size, noise_scaling=1., debug=0, **kwargs):
         super(FivEM, self).__init__(**kwargs)
         self.nvis = nvis
         self.nhid = nhid
@@ -141,23 +140,38 @@ class FivEM(Initializable, Random):
         self.b_init = Constant(0)
         self.c_init = Constant(0)
         self.h_init = Constant(0)
+        self.Wxx_init = Constant(0)
+        self.Whh_init = Constant(0)
         self.h_prev_init = Constant(0)
         self.energy_prev_init = Constant(0)
         self.energy_new_init = Constant(0)
         self.rho = Rho()
         self.noise_scaling = noise_scaling
         self.children = [self.rho]
+        self.debug = debug
 
+    def pp(self,var,name,level=1):
+        if self.debug >= level:
+            return theano.printing.Print(name)(var)
+        else:
+            return var
+        
     def _allocate(self):
-        W = shared_floatx_nans((self.nvis, self.nhid), name='W')
-        self.params.append(W)
-        add_role(W, WEIGHT)
+        Wxh = shared_floatx_nans((self.nvis, self.nhid), name='Wxh')
+        self.params.append(Wxh)
+        add_role(Wxh, WEIGHT)
         b = shared_floatx_nans((self.nhid), name='b')
         self.params.append(b)
         add_role(b, BIAS)
         c = shared_floatx_nans((self.nvis), name='c')
         self.params.append(c)
         add_role(c, BIAS)
+        Whh = shared_floatx_nans((self.nhid, self.nhid), name='Whh')
+        self.params.append(Whh)
+        add_role(Whh, WEIGHT)
+        Wxx = shared_floatx_nans((self.nvis, self.nvis), name='Wxx')
+        self.params.append(Wxx)
+        add_role(Wxx, WEIGHT)
         self.h = shared_floatx_nans((self.batch_size, self.nhid), name='h')
         self.h_prev = shared_floatx_nans((self.batch_size, self.nhid),
                                          name='h_prev')
@@ -165,17 +179,19 @@ class FivEM(Initializable, Random):
         self.energy_new = shared_floatx_nans((),name="energy_new")
 
     def _initialize(self):
-        W,b,c = self.params
-        self.weights_init.initialize(W, self.rng)
+        Wxh,b,c,Whh,Wxx = self.params
+        self.weights_init.initialize(Wxh, self.rng)
         self.b_init.initialize(b, self.rng)
         self.c_init.initialize(c, self.rng)
+        self.Whh_init.initialize(Whh, self.rng)
+        self.Wxx_init.initialize(Wxx, self.rng)
         self.h_init.initialize(self.h, self.rng)
         self.h_prev_init.initialize(self.h_prev, self.rng)
         self.energy_prev_init.initialize(self.energy_prev, self.rng)
         self.energy_new_init.initialize(self.energy_new, self.rng)
 
     @property
-    def W(self):
+    def Wxh(self):
         return self.params[0]
     
     @property
@@ -186,6 +202,14 @@ class FivEM(Initializable, Random):
     def c(self):
         return self.params[2]
 
+    @property
+    def Whh(self):
+        return self.params[3]
+    
+    @property
+    def Wxx(self):
+        return self.params[4]
+    
     def energy(self, x, h):
         """Computes the energy function.
 
@@ -197,10 +221,14 @@ class FivEM(Initializable, Random):
             Batch of hidden states.
 
         """
+        rx = self.rho.apply(x)
+        rh = self.rho.apply(h)
         return (0.5 * (tensor.dot(x, x.T) + tensor.dot(h, h.T)) -
-                (tensor.dot(self.rho.apply(x), self.W) * self.rho.apply(h)).sum(axis=1) +
-                 tensor.dot(self.rho.apply(x),self.c) + tensor.dot(self.rho.apply(h),self.b)
-                 )
+                (tensor.dot(rx, self.Wxh) * rh).sum(axis=1) +
+                (tensor.dot(rx, self.Wxx) * rx).sum(axis=1) +
+                (tensor.dot(rh, self.Whh) * rh).sum(axis=1) +
+                tensor.dot(rx,self.c) + tensor.dot(rh,self.b)
+               )
 
     def langevin_update(self, x, h, update_x=False):
         """Computes state updates according to Langevin dynamics.
@@ -257,32 +285,37 @@ class FivEM(Initializable, Random):
         """
         h_prev = self.h_prev
         h = self.h
-        h_next = disconnected_grad(self.langevin_update(x, h))
-        old_energy = self.energy_prev
-        new_energy = self.energy(x,h_next).mean(dtype=old_energy.dtype)
-        delta_energy = old_energy - new_energy
+        h_next = self.pp(disconnected_grad(self.langevin_update(self.pp(x,"x",3),
+                                                                self.pp(h,"h",2))),
+                        "h_next",2)
+        old_energy = self.pp(self.energy_prev,"old_energy",2)
+        new_energy = self.pp(self.energy(x,h_next).mean(dtype=old_energy.dtype),"new_energy",1)
+        delta_energy = self.pp(old_energy - new_energy,"delta_energy",1)
         updates = OrderedDict([(h_prev, h), (h, h_next),(self.energy_prev,self.energy_new),(self.energy_new,new_energy)])
         application_call.updates = dict_union(application_call.updates,
                                               updates)
-        h_prediction_residual = (h_next - h_prev + self.epsilon *
+        h_prediction_residual = (h_next - self.pp(h_prev,"h_prev",3) + self.epsilon *
                                  tensor.grad(self.energy(x, h_prev).sum(), h_prev))
-        J_h = tensor.dot(h_prediction_residual, h_prediction_residual.T).mean()
+        J_h = self.pp(tensor.dot(h_prediction_residual, h_prediction_residual.T).mean(),"J_h",1)
         x_prediction_residual = tensor.grad(self.energy(x, h_prev).sum(), x)
-        J_x = tensor.dot(x_prediction_residual,x_prediction_residual.T).mean()
-        application_call.add_auxiliary_variable(self.energy_prev, name="energy_prev")
-        application_call.add_auxiliary_variable(self.energy_new, name="energy_new")
-        application_call.add_auxiliary_variable(self.energy_prev - self.energy_new, name="energy_decrease")
-        application_call.add_auxiliary_variable(J_x, name="J_x")
-        application_call.add_auxiliary_variable(J_h, name="J_h")
-        application_call.add_auxiliary_variable(x*1, name="x")
-        application_call.add_auxiliary_variable(h_prev, name="h_prev")
-        application_call.add_auxiliary_variable(h, name="h")
-        application_call.add_auxiliary_variable(h_next, name="h_next")
-        application_call.add_auxiliary_variable(self.W*1., name="W")
+        J_x = self.pp(tensor.dot(x_prediction_residual,x_prediction_residual.T).mean(),"J_x",1)
+        ## the values printed using add_auxiliary_variables are not reliable, so use printing.Print instead
+        #application_call.add_auxiliary_variable(self.energy_prev, name="energy_prev")
+        #application_call.add_auxiliary_variable(self.energy_new, name="energy_new")
+        #application_call.add_auxiliary_variable(self.energy_prev - self.energy_new, name="energy_decrease")
+        #application_call.add_auxiliary_variable(J_x, name="J_x")
+        #application_call.add_auxiliary_variable(J_h, name="J_h")
+        #application_call.add_auxiliary_variable(x*1, name="x")
+        #application_call.add_auxiliary_variable(h_prev, name="h_prev")
+        #application_call.add_auxiliary_variable(h, name="h")
+        #application_call.add_auxiliary_variable(h_next, name="h_next")
+        application_call.add_auxiliary_variable(self.Wxh*1., name="Wxh")
+        application_call.add_auxiliary_variable(self.Whh*1., name="Whh")
+        application_call.add_auxiliary_variable(self.Wxx*1., name="Wxx")
         application_call.add_auxiliary_variable(self.b*1, name="b")
         application_call.add_auxiliary_variable(self.c*1, name="c")
-        # YB: the lines below make blocks crash, not sure why
+        # YB: the commented lines below make blocks crash, not sure why
         #application_call.add_auxiliary_variable(self.params[0], name="W")
         #application_call.add_auxiliary_variable(self.params[1], name="b")
         #application_call.add_auxiliary_variable(self.params[2], name="c")
-        return J_x + J_h
+        return self.pp(J_x + J_h,"total_cost")
