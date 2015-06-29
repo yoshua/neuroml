@@ -23,14 +23,15 @@ from theano import tensor
 
 from emdsm_blocks_fuel import FivEM, Toy2DGaussianDataset, Repeat
 
-
+def sharedX(x): return theano.shared(theano._asarray(x,dtype=theano.config.floatX))
+    
 def create_main_loop():
     seed = 188229
     num_epochs = 10000
     n_inference_steps = 10
     dataname = "toy"
     if dataname=="toy":
-       batch_size = 4
+       batch_size = 2
        num_examples = batch_size
        mean = numpy.array([0, 0])
        covariance_matrix = 0.1*numpy.array([[3.0, 1.5],
@@ -134,24 +135,29 @@ def plot_generated_samples(x,data, data_category = 'toy', plot_config = None):
         #pl.show()
         mp.show()
 
-def plot_energy_surface(inferencer):
+def plot_energy_surface(model):
     from mpl_toolkits.mplot3d import Axes3D
     from matplotlib import cm
     from matplotlib.ticker import LinearLocator, FormatStrFormatter
     import matplotlib.pyplot as plt
-    (x1,x2) = np.meshgrid(np.arange(-.5,.5,.05),np.arange(-.5,.5,.05))
-    x = np.vstack((x1.flatten(),x2.flatten())).T
-    h = np.zeros((x.shape[0],inferencer.energyfn.nh))
-    for i in range(10):
-        (h,) = inferencer.h_map(x,h)
+
+
+    (x1,x2) = numpy.meshgrid(numpy.arange(-.5,.5,.05),numpy.arange(-.5,.5,.05))
+    x = sharedX(numpy.vstack((x1.flatten(),x2.flatten())).T)
+    h = sharedX(numpy.zeros((x.get_value().shape[0],model.nhid)))
+    map_f = theano.function([],updates=OrderedDict([(h,model.map_update(x,h))]))
+    energy_f = theano.function([],[model.energy(x,h)])
+    
+    for i in range(100):
+        map_f()
         #print "total E=",inferencer.energyfn.E_fn(x,h)
-    (E_,) = inferencer.energyfn.elementwise_E_fn(x,h)
+    (E_,) = energy_f()
     E_ = E_.reshape(x1.shape)
     fig = plt.figure()
     ax = fig.gca(projection='3d')
     surf = ax.plot_surface(x1, x2, E_, rstride=1, cstride=1, cmap=cm.coolwarm,
             linewidth=0, antialiased=False)
-    ax.set_zlim(np.min(E_), np.max(E_))
+    ax.set_zlim(numpy.min(E_), numpy.max(E_))
     ax.zaxis.set_major_locator(LinearLocator(10))
     ax.zaxis.set_major_formatter(FormatStrFormatter('%.02f'))
     fig.colorbar(surf, shrink=0.5, aspect=5)
@@ -161,26 +167,30 @@ def plot_energy_surface(inferencer):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.ERROR,filename="train_emdsm.log")
     #logging.basicConfig(level=logging.DEBUG,filename="train_emdsm.log",filemode='w')
-    reload = "tmpt3YKfp"
+    reload = None # "tmpt3YKfp"
     main_loop,dataset,dataname = create_main_loop()
     if reload != None:
         main_loop = load(reload)
     
     main_loop.run()
+    model, = main_loop.model.top_bricks
+
+    print "show energy function"    
+    plot_energy_surface(model)
     
     print "generate samples"
 
-    model, = main_loop.model.top_bricks
     n_generated = 1000
     x = shared_floatx_zeros((n_generated, model.nvis))
     h = shared_floatx_zeros((n_generated, model.nhid))
     h.set_value(numpy.random.normal(0,scale=0.5,size=(n_generated,model.nhid)))
     model.noise_scaling=1
     new_x, new_h = model.langevin_update(x, h, update_x=True)
-    f = theano.function(
+    generate_f = theano.function(
         inputs=[], updates=OrderedDict([(x, new_x), (h, new_h)]))
+    
     for i in range(1000):
-        f()
+        generate_f()
     xx=x.get_value()
     if dataname=="toy":
       print(numpy.cov(xx, rowvar=0))

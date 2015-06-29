@@ -298,6 +298,18 @@ class FivEM(Initializable, Random):
             return (self.corrupt(h) - self.epsilon *
                     tensor.grad(self.energy(x, h).sum(), h))
 
+    def map_update(self, x, h):
+        """Computes h update going down the energy gradient, given x.
+
+        Parameters
+        ----------
+        x : tensor variable
+            Batch of visible states.
+        h : tensor variable
+            Batch of hidden states.
+        """
+        return (h - self.epsilon * tensor.grad(self.energy(x, h).sum(), h))
+
     def corrupt(self, var):
         """Adds zero-mean gaussian noise to the input variable.
 
