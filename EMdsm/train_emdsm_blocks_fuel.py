@@ -13,7 +13,7 @@ from blocks.graph import ComputationGraph
 from blocks.initialization import IsotropicGaussian
 from blocks.main_loop import MainLoop
 from blocks.model import Model
-from blocks.utils import shared_floatx_zeros
+from blocks.utils import shared_floatx, shared_floatx_zeros
 from blocks.extensions.monitoring import DataStreamMonitoring
 from fuel.streams import DataStream
 from fuel.schemes import ShuffledScheme,ConstantScheme,SequentialScheme
@@ -23,7 +23,6 @@ from theano import tensor
 
 from emdsm_blocks_fuel import FivEM, Toy2DGaussianDataset, Repeat
 
-def sharedX(x): return theano.shared(theano._asarray(x,dtype=theano.config.floatX))
     
 def create_main_loop():
     seed = 188229
@@ -143,8 +142,8 @@ def plot_energy_surface(model):
 
 
     (x1,x2) = numpy.meshgrid(numpy.arange(-.5,.5,.05),numpy.arange(-.5,.5,.05))
-    x = sharedX(numpy.vstack((x1.flatten(),x2.flatten())).T)
-    h = sharedX(numpy.zeros((x.get_value().shape[0],model.nhid)))
+    x = shared_floatx(numpy.vstack((x1.flatten(),x2.flatten())).T)
+    h = shared_floatx(numpy.zeros((x.get_value().shape[0],model.nhid)))
     map_f = theano.function([],updates=OrderedDict([(h,model.map_update(x,h))]))
     energy_f = theano.function([],[model.energy(x,h)])
     
