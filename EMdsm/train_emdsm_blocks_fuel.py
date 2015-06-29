@@ -7,6 +7,8 @@ import pdb
 from blocks.algorithms import GradientDescent, Adam, Scale, Momentum, AdaDelta, RMSProp, AdaGrad
 from blocks.extensions import FinishAfter, Timing, Printing
 from blocks.extensions.training import SharedVariableModifier
+from blocks.extensions.saveload import Checkpoint
+from blocks.serialization import load
 from blocks.graph import ComputationGraph
 from blocks.initialization import IsotropicGaussian
 from blocks.main_loop import MainLoop
@@ -24,9 +26,9 @@ from emdsm_blocks_fuel import FivEM, Toy2DGaussianDataset, Repeat
 
 def create_main_loop():
     seed = 188229
-    num_epochs = 1000
-    n_inference_steps = 1
-    dataname = "mnist"
+    num_epochs = 10000
+    n_inference_steps = 10
+    dataname = "toy"
     if dataname=="toy":
        batch_size = 4
        num_examples = batch_size
@@ -78,7 +80,7 @@ def create_main_loop():
     model = Model(cost)
     #step_rule = Adam(learning_rate=2e-5, beta1=0.1, beta2=0.001, epsilon=1e-8,
     #                 decay_factor=(1 - 1e-8))
-    step_rule = Momentum(learning_rate=1e-3,momentum=0.95)
+    step_rule = Momentum(learning_rate=1e-2,momentum=0.95)
     #step_rule = AdaDelta()
     #step_rule = RMSProp(learning_rate=0.01)
     #step_rule = AdaGrad(learning_rate=1e-4)
@@ -106,7 +108,8 @@ def create_main_loop():
         #    model_brick.h,
         #    update_val,
         #    after_batch=False, before_batch=True),
-        Printing(after_epoch=False, every_n_epochs=100,after_batch=False)
+        Printing(after_epoch=False, every_n_epochs=100,after_batch=False),
+        Checkpoint(path="./",every_n_epochs=100,after_training=True)
     ]
     main_loop = MainLoop(model=model, data_stream=train_loop_stream,
                          algorithm=algorithm, extensions=extensions)
@@ -158,8 +161,11 @@ def plot_energy_surface(inferencer):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.ERROR,filename="train_emdsm.log")
     #logging.basicConfig(level=logging.DEBUG,filename="train_emdsm.log",filemode='w')
+    reload = "tmpt3YKfp"
     main_loop,dataset,dataname = create_main_loop()
-
+    if reload != None:
+        main_loop = load(reload)
+    
     main_loop.run()
     
     print "generate samples"
