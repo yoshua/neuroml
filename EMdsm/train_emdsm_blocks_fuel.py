@@ -1,5 +1,7 @@
+import itertools
 import logging
 from collections import OrderedDict
+from argparse import ArgumentParser
 
 import numpy
 import theano
@@ -10,7 +12,7 @@ from blocks.extensions.training import SharedVariableModifier
 from blocks.extensions.saveload import Checkpoint
 from blocks.serialization import load
 from blocks.graph import ComputationGraph
-from blocks.initialization import IsotropicGaussian
+from blocks.initialization import IsotropicGaussian, Constant
 from blocks.main_loop import MainLoop
 from blocks.model import Model
 from blocks.utils import shared_floatx, shared_floatx_zeros
@@ -24,53 +26,32 @@ from theano import tensor
 from emdsm_blocks_fuel import FivEM, Toy2DGaussianDataset, Repeat
 
     
-def create_main_loop():
+def create_main_loop(dataset, nvis, nhid):
     seed = 188229
     num_epochs = 10000
     n_inference_steps = 10
-    dataname = "toy"
-    if dataname=="toy":
-       batch_size = 2
-       num_examples = batch_size
-       mean = numpy.array([0, 0])
-       covariance_matrix = 0.1*numpy.array([[3.0, 1.5],
-                                            [1.5, 1.0]])
-       dataset = Toy2DGaussianDataset(mean, covariance_matrix, num_examples,squash=True,
-                                      rng=numpy.random.RandomState(seed))
-       print "data cov:"
-       print(numpy.cov(dataset.indexables[0], rowvar=0))
-       print dataset.indexables[0]
-       nhid = 4
-       nvis = len(mean)
-    else:
-       dataset = MNIST(("train",), sources=('features',))
-       nhid = 100
-       num_examples = dataset.num_examples
-       batch_size = num_examples
-       nvis = 784
+    num_examples = dataset.num_examples
+    batch_size = num_examples
 
-    train_loop_stream = DataStream.default_stream(
+    train_loop_stream = Flatten(DataStream.default_stream(
         dataset=dataset,
         iteration_scheme=SequentialScheme(dataset.num_examples, batch_size)
         #Repeat(
 #            ShuffledScheme(dataset.num_examples, batch_size), n_inference_steps))
             #, n_inference_steps)
-            )
-    monitoring_stream = DataStream.default_stream(
+            ), which_sources=('features',))
+    monitoring_stream = Flatten(DataStream.default_stream(
         dataset=dataset,
         iteration_scheme=SequentialScheme(dataset.num_examples, batch_size)
             #Repeat(
             #, n_inference_steps)
             #ShuffledScheme(dataset.num_examples, batch_size), n_inference_steps))
-            )
-
-    if dataname=='mnist':
-        train_loop_stream = Flatten(train_loop_stream,which_sources=('features',))
-        monitoring_stream = Flatten(monitoring_stream,which_sources=('features',))
+            ), which_sources=('features',))
 
     model_brick = FivEM(
         nvis=nvis, nhid=nhid, epsilon=.001, batch_size=batch_size,
-        weights_init=IsotropicGaussian(0.1), noise_scaling=1, debug=0,lateral_x=False,lateral_h=True)
+        weights_init=IsotropicGaussian(0.1), biases_init=Constant(0),
+        noise_scaling=1, debug=0, lateral_x=False, lateral_h=True)
     model_brick.initialize()
 
     x = tensor.matrix('features')
@@ -99,7 +80,8 @@ def create_main_loop():
         Timing(),
         FinishAfter(after_n_epochs=num_epochs),
         DataStreamMonitoring([cost]+computation_graph.auxiliary_variables,
-                             monitoring_stream, after_batch=False, every_n_epochs=100),
+                             monitoring_stream, after_batch=False,
+                             after_epoch=False, every_n_epochs=1),
         #SharedVariableModifier(
         #    model_brick.h_prev,
         #    update_val,
@@ -108,12 +90,12 @@ def create_main_loop():
         #    model_brick.h,
         #    update_val,
         #    after_batch=False, before_batch=True),
-        Printing(after_epoch=False, every_n_epochs=100,after_batch=False),
-        Checkpoint(path="./",every_n_epochs=100,after_training=True)
+        Printing(after_epoch=False, every_n_epochs=1,after_batch=False),
+        Checkpoint(path="./fivem.zip",every_n_epochs=10,after_training=True)
     ]
     main_loop = MainLoop(model=model, data_stream=train_loop_stream,
                          algorithm=algorithm, extensions=extensions)
-    return main_loop,dataset,dataname
+    return main_loop
 
 
 import matplotlib.pyplot as mp
@@ -162,23 +144,76 @@ def plot_energy_surface(model):
     fig.colorbar(surf, shrink=0.5, aspect=5)
     plt.show() 
     plt.savefig('E.png')
+
+
+def dataset_from_data_stream(data_stream):
+    if hasattr(data_stream, 'dataset'):
+        return data_stream.dataset
+    else:
+        return dataset_from_data_stream(data_stream.data_stream)
+
+
+def show_samples(samples, sample_shape):
+    from matplotlib import pyplot
+    from matplotlib import cm
+
+    nrows, ncols = 10, 10
+    samples = samples[:nrows * ncols].reshape((-1,) + sample_shape)
+    figure, axes = pyplot.subplots(nrows=nrows, ncols=ncols)
+    for n, (i, j) in enumerate(itertools.product(range(nrows),
+                                                 range(ncols))):
+        ax = axes[i][j]
+        ax.axis('off')
+        ax.imshow(samples[n], cmap=cm.Greys_r, interpolation='nearest')
+    pyplot.show()
+
     
 if __name__ == "__main__":
     logging.basicConfig(level=logging.ERROR,filename="train_emdsm.log")
-    #logging.basicConfig(level=logging.DEBUG,filename="train_emdsm.log",filemode='w')
-    reload = None # "tmpt3YKfp"
-    main_loop,dataset,dataname = create_main_loop()
-    if reload != None:
-        main_loop = load(reload)
-    
+    parser = ArgumentParser("Train a FivEM movel.")
+    parser.add_argument("-d", "--dataset", type=str, choices=('toy', 'mnist'),
+                        dest="which_dataset", default="toy",
+                        help="Which dataset to use.")
+    parser.add_argument("--nhid", type=int, default=2,
+                        help="Number of hidden units.")
+    parser.add_argument("--seed", type=int, default=188229, help="RNG seed.")
+    parser.add_argument("--reload", dest="main_loop_path", type=str,
+                        default=None, help="Reload a pickled main loop.")
+    args = parser.parse_args()
+
+    if args.main_loop_path:
+        main_loop = load(args.main_loop_path)
+        dataset = dataset_from_data_stream(data_stream)
+        which_dataset = 'toy' if 'Toy' in str(dataset.__class__) else 'mnist'
+    else:
+        which_dataset = args.which_dataset
+        if which_dataset == "toy":
+            batch_size = 2
+            num_examples = batch_size
+            mean = numpy.array([0, 0])
+            covariance_matrix = 0.1 * numpy.array([[3.0, 1.5],
+                                                   [1.5, 1.0]])
+            dataset = Toy2DGaussianDataset(
+                 mean, covariance_matrix, num_examples, squash=True,
+                 rng=numpy.random.RandomState(args.seed))
+            print "data cov:"
+            print(numpy.cov(dataset.indexables[0], rowvar=0))
+            print dataset.indexables[0]
+            nvis = len(mean)
+        else:
+            dataset = MNIST(("train",), sources=('features',))
+            num_examples = dataset.num_examples
+            batch_size = num_examples
+            nvis = 784
+        main_loop = create_main_loop(dataset, nvis, args.nhid)
     main_loop.run()
     model, = main_loop.model.top_bricks
 
-    print "show energy function"    
-    plot_energy_surface(model)
+    if which_dataset == 'toy':
+        print "show energy function"
+        plot_energy_surface(model)
     
     print "generate samples"
-
     n_generated = 1000
     x = shared_floatx_zeros((n_generated, model.nvis))
     h = shared_floatx_zeros((n_generated, model.nhid))
@@ -187,17 +222,13 @@ if __name__ == "__main__":
     new_x, new_h = model.langevin_update(x, h, update_x=True)
     generate_f = theano.function(
         inputs=[], updates=OrderedDict([(x, new_x), (h, new_h)]))
-    
+
     for i in range(1000):
         generate_f()
     xx=x.get_value()
-    if dataname=="toy":
-      print(numpy.cov(xx, rowvar=0))
-      plot_generated_samples(xx,dataset.indexables[0])
 
-    #main_loop.run()
-    #for i in range(1000):
-    #    f()
-    #print(numpy.cov(xx, rowvar=0))
-    #plot_generated_samples(xx,dataset.indexables[0])
-    
+    if which_dataset == 'toy':
+        print(numpy.cov(xx, rowvar=0))
+        plot_generated_samples(xx,dataset.indexables[0])
+    else:
+        show_samples(samples=xx, sample_shape=(28, 28))
