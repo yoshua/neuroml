@@ -26,9 +26,8 @@ from theano import tensor
 from emdsm_blocks_fuel import FivEM, Toy2DGaussianDataset, Repeat
 
     
-def create_main_loop(dataset, nvis, nhid):
+def create_main_loop(dataset, nvis, nhid, num_epochs):
     seed = 188229
-    num_epochs = 100
     n_inference_steps = 10
     num_examples = dataset.num_examples
     batch_size = num_examples
@@ -172,6 +171,8 @@ if __name__ == "__main__":
                         help="Which dataset to use.")
     parser.add_argument("--nhid", type=int, default=2,
                         help="Number of hidden units.")
+    parser.add_argument("--nepochs", type=int, default=100,
+                        help="Number of training epochs.")
     parser.add_argument("--seed", type=int, default=188229, help="RNG seed.")
     parser.add_argument("--reload", dest="main_loop_path", type=str,
                         default=None, help="Reload a pickled main loop.")
@@ -201,7 +202,7 @@ if __name__ == "__main__":
             num_examples = dataset.num_examples
             batch_size = num_examples
             nvis = 784
-        main_loop = create_main_loop(dataset, nvis, args.nhid)
+        main_loop = create_main_loop(dataset, nvis, args.nhid,args.nepochs)
     main_loop.run()
     model, = main_loop.model.top_bricks
 
