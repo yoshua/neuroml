@@ -28,23 +28,19 @@ from emdsm_blocks_fuel import FivEM, Toy2DGaussianDataset, Repeat
     
 def create_main_loop(dataset, nvis, nhid):
     seed = 188229
-    num_epochs = 10000
+    num_epochs = 100
     n_inference_steps = 10
     num_examples = dataset.num_examples
     batch_size = num_examples
 
     train_loop_stream = Flatten(DataStream.default_stream(
         dataset=dataset,
-        iteration_scheme=SequentialScheme(dataset.num_examples, batch_size)
-        #Repeat(
+        iteration_scheme=Repeat(SequentialScheme(dataset.num_examples, batch_size), n_inference_steps)
 #            ShuffledScheme(dataset.num_examples, batch_size), n_inference_steps))
-            #, n_inference_steps)
             ), which_sources=('features',))
     monitoring_stream = Flatten(DataStream.default_stream(
         dataset=dataset,
-        iteration_scheme=SequentialScheme(dataset.num_examples, batch_size)
-            #Repeat(
-            #, n_inference_steps)
+        iteration_scheme=Repeat(SequentialScheme(dataset.num_examples, batch_size),n_inference_steps)
             #ShuffledScheme(dataset.num_examples, batch_size), n_inference_steps))
             ), which_sources=('features',))
 
@@ -72,7 +68,7 @@ def create_main_loop(dataset, nvis, nhid):
     def update_val(n_it, old_value):
         if n_it % n_inference_steps == 0:
             # return 0 * old_value 
-            return old_value#+numpy.random.normal(0,0.05,size=old_value.shape)
+            return old_value+numpy.random.normal(0,0.1,size=old_value.shape)
         else:
             return old_value
 
@@ -82,14 +78,14 @@ def create_main_loop(dataset, nvis, nhid):
         DataStreamMonitoring([cost]+computation_graph.auxiliary_variables,
                              monitoring_stream, after_batch=False,
                              after_epoch=False, every_n_epochs=1),
-        #SharedVariableModifier(
-        #    model_brick.h_prev,
-        #    update_val,
-        #    after_batch=False, before_batch=True),
-        #SharedVariableModifier(
-        #    model_brick.h,
-        #    update_val,
-        #    after_batch=False, before_batch=True),
+        SharedVariableModifier(
+            model_brick.h_prev,
+            update_val,
+            after_batch=False, before_batch=True),
+        SharedVariableModifier(
+            model_brick.h,
+            update_val,
+            after_batch=False, before_batch=True),
         Printing(after_epoch=False, every_n_epochs=1,after_batch=False),
         Checkpoint(path="./fivem.zip",every_n_epochs=10,after_training=True)
     ]
