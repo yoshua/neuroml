@@ -168,8 +168,8 @@ class FivEM(Initializable, Random):
 
     """
     @lazy(allocation=['nvis', 'nhid'])
-    def __init__(self, nvis, nhid, epsilon, batch_size, noise_scaling=1.,
-                 lateral_x=False, lateral_h=False,debug=0, **kwargs):
+    def __init__(self, nvis, nhid, epsilon, batch_size, noise_scaling=1.0,
+                 lateral_x=False, lateral_h=False, debug=0, **kwargs):
         super(FivEM, self).__init__(**kwargs)
         self.nvis = nvis
         self.nhid = nhid
@@ -177,14 +177,7 @@ class FivEM(Initializable, Random):
         self.lateral_h = lateral_h
         self.epsilon = epsilon
         self.batch_size = batch_size
-        self.b_init = Constant(0)
-        self.c_init = Constant(0)
-        self.h_init = Constant(0)
-        self.Wxx_init = Constant(0)
-        self.Whh_init = Constant(0)
-        self.h_prev_init = Constant(0)
-        self.energy_prev_init = Constant(0)
-        self.energy_new_init = Constant(0)
+        states_init = Constant(0)
         self.rho = Rho()
         self.noise_scaling = noise_scaling
         self.children = [self.rho]
@@ -221,14 +214,14 @@ class FivEM(Initializable, Random):
     def _initialize(self):
         Wxh,b,c,Whh,Wxx = self.params
         self.weights_init.initialize(Wxh, self.rng)
-        self.b_init.initialize(b, self.rng)
-        self.c_init.initialize(c, self.rng)
-        self.Whh_init.initialize(Whh, self.rng)
-        self.Wxx_init.initialize(Wxx, self.rng)
-        self.h_init.initialize(self.h, self.rng)
-        self.h_prev_init.initialize(self.h_prev, self.rng)
-        self.energy_prev_init.initialize(self.energy_prev, self.rng)
-        self.energy_new_init.initialize(self.energy_new, self.rng)
+        self.biases_init.initialize(b, self.rng)
+        self.biases_init.initialize(c, self.rng)
+        self.weights_init.initialize(Whh, self.rng)
+        self.weights_init.initialize(Wxx, self.rng)
+        self.states_init.initialize(self.h, self.rng)
+        self.states_init.initialize(self.h_prev, self.rng)
+        self.states_init.initialize(self.energy_prev, self.rng)
+        self.states_init.initialize(self.energy_new, self.rng)
 
     @property
     def Wxh(self):
