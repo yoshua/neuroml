@@ -177,7 +177,7 @@ class FivEM(Initializable, Random):
         self.lateral_h = lateral_h
         self.epsilon = epsilon
         self.batch_size = batch_size
-        states_init = Constant(0)
+        self.states_init = Constant(0)
         self.rho = Rho()
         self.noise_scaling = noise_scaling
         self.children = [self.rho]
