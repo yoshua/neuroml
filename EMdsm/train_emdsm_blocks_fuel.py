@@ -72,11 +72,11 @@ def create_main_loop(dataset, nvis, nhid, num_epochs):
                              after_epoch=False, every_n_epochs=1),
         SharedVariableModifier(
             model_brick.h_prev,
-            update_val_maker(num_inference_steps),
+            update_val_maker(n_inference_steps),
             after_batch=False, before_batch=True),
         SharedVariableModifier(
             model_brick.h,
-            update_val_maker(num_inference_steps),
+            update_val_maker(n_inference_steps),
             after_batch=False, before_batch=True),
         Printing(after_epoch=False, every_n_epochs=1,after_batch=False),
         Checkpoint(path="./fivem.zip",every_n_epochs=10,after_training=True)
