@@ -191,19 +191,19 @@ class FivEM(Initializable, Random):
         
     def _allocate(self):
         Wxh = shared_floatx_nans((self.nvis, self.nhid), name='Wxh')
-        self.params.append(Wxh)
+        self.parameters.append(Wxh)
         add_role(Wxh, WEIGHT)
         b = shared_floatx_nans((self.nhid), name='b')
-        self.params.append(b)
+        self.parameters.append(b)
         add_role(b, BIAS)
         c = shared_floatx_nans((self.nvis), name='c')
-        self.params.append(c)
+        self.parameters.append(c)
         add_role(c, BIAS)
         Whh = shared_floatx_nans((self.nhid, self.nhid), name='Whh')
-        self.params.append(Whh)
+        self.parameters.append(Whh)
         add_role(Whh, WEIGHT)
         Wxx = shared_floatx_nans((self.nvis, self.nvis), name='Wxx')
-        self.params.append(Wxx)
+        self.parameters.append(Wxx)
         add_role(Wxx, WEIGHT)
         self.h = shared_floatx_nans((self.batch_size, self.nhid), name='h')
         self.h_prev = shared_floatx_nans((self.batch_size, self.nhid),
@@ -212,7 +212,7 @@ class FivEM(Initializable, Random):
         self.energy_new = shared_floatx_nans((),name="energy_new")
 
     def _initialize(self):
-        Wxh,b,c,Whh,Wxx = self.params
+        Wxh,b,c,Whh,Wxx = self.parameters
         self.weights_init.initialize(Wxh, self.rng)
         self.biases_init.initialize(b, self.rng)
         self.biases_init.initialize(c, self.rng)
@@ -225,23 +225,23 @@ class FivEM(Initializable, Random):
 
     @property
     def Wxh(self):
-        return self.params[0]
+        return self.parameters[0]
     
     @property
     def b(self):
-        return self.params[1]
+        return self.parameters[1]
 
     @property
     def c(self):
-        return self.params[2]
+        return self.parameters[2]
 
     @property
     def Whh(self):
-        return self.params[3]
+        return self.parameters[3]
     
     @property
     def Wxx(self):
-        return self.params[4]
+        return self.parameters[4]
     
     def energy(self, x, h):
         """Computes the energy function.
@@ -370,3 +370,11 @@ class FivEM(Initializable, Random):
         #application_call.add_auxiliary_variable(self.params[1], name="b")
         #application_call.add_auxiliary_variable(self.params[2], name="c")
         return self.pp(J_x + J_h,"total_cost")
+
+
+def update_val(n_it, old_value):
+    if n_it % n_inference_steps == 0:
+        # return 0 * old_value
+        return old_value+numpy.random.normal(0,0.1,size=old_value.shape)
+    else:
+        return old_value
