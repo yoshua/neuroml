@@ -372,11 +372,13 @@ class FivEM(Initializable, Random):
         return self.pp(J_x + J_h,"total_cost")
 
 
-def update_val_maker(n_inference_steps):
-    def update_val(n_it, old_value):
-        if n_it % n_inference_steps == 0:
+class UpdateVal(object):
+    def __init__(self, n_inference_steps):
+        self.n_inference_steps = n_inference_steps
+
+    def __call__(n_it, old_value):
+        if n_it % self.n_inference_steps == 0:
             # return 0 * old_value
             return old_value+numpy.random.normal(0,0.1,size=old_value.shape)
         else:
             return old_value
-    return update_val
