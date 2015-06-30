@@ -372,7 +372,7 @@ class FivEM(Initializable, Random):
         return self.pp(J_x + J_h,"total_cost")
 
 
-def update_val_maker(n_inference_steps)
+def update_val_maker(n_inference_steps):
     def update_val(n_it, old_value):
         if n_it % n_inference_steps == 0:
             # return 0 * old_value
