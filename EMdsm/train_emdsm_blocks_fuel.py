@@ -27,27 +27,31 @@ from theano import tensor
 from emdsm_blocks_fuel import FivEM, Toy2DGaussianDataset, Repeat, update_val
 
     
-def create_main_loop(dataset, nvis, nhid, num_epochs):
+def create_main_loop(dataset, nvis, nhid, num_epochs, debug_level=0):
     seed = 188229
-    n_inference_steps = 10
+    n_inference_steps = 1
     num_examples = dataset.num_examples
     batch_size = num_examples
 
     train_loop_stream = Flatten(DataStream.default_stream(
         dataset=dataset,
-        iteration_scheme=Repeat(SequentialScheme(dataset.num_examples, batch_size), n_inference_steps)
+        iteration_scheme= # Repeat(
+          SequentialScheme(dataset.num_examples, batch_size)
+         #, n_inference_steps)
 #            ShuffledScheme(dataset.num_examples, batch_size), n_inference_steps))
             ), which_sources=('features',))
     monitoring_stream = Flatten(DataStream.default_stream(
         dataset=dataset,
-        iteration_scheme=Repeat(SequentialScheme(dataset.num_examples, batch_size),n_inference_steps)
+        iteration_scheme= # Repeat(
+            SequentialScheme(dataset.num_examples, batch_size)
+            #,n_inference_steps)
             #ShuffledScheme(dataset.num_examples, batch_size), n_inference_steps))
             ), which_sources=('features',))
 
     model_brick = FivEM(
         nvis=nvis, nhid=nhid, epsilon=.001, batch_size=batch_size,
         weights_init=IsotropicGaussian(0.1), biases_init=Constant(0),
-        noise_scaling=1, debug=0, lateral_x=False, lateral_h=True)
+        noise_scaling=1, debug=debug_level, lateral_x=False, lateral_h=False)
     model_brick.initialize()
 
     x = tensor.matrix('features')
@@ -71,14 +75,14 @@ def create_main_loop(dataset, nvis, nhid, num_epochs):
         DataStreamMonitoring([cost]+computation_graph.auxiliary_variables,
                              monitoring_stream, after_batch=False,
                              after_epoch=False, every_n_epochs=1),
-        SharedVariableModifier(
-            model_brick.h_prev,
-            functools.partial(update_val, n_inference_steps=n_inference_steps),
-            after_batch=False, before_batch=True),
-        SharedVariableModifier(
-            model_brick.h,
-            functools.partial(update_val, n_inference_steps=n_inference_steps),
-            after_batch=False, before_batch=True),
+        #SharedVariableModifier(
+        #    model_brick.h_prev,
+        #    functools.partial(update_val, n_inference_steps=n_inference_steps),
+        #    after_batch=False, before_batch=True),
+        #SharedVariableModifier(
+        #    model_brick.h,
+        #    functools.partial(update_val, n_inference_steps=n_inference_steps),
+        #    after_batch=False, before_batch=True),
         Printing(after_epoch=False, every_n_epochs=1,after_batch=False),
         Checkpoint(path="./fivem.zip",every_n_epochs=10,after_training=True)
     ]
@@ -168,6 +172,7 @@ if __name__ == "__main__":
     parser.add_argument("--nepochs", type=int, default=100,
                         help="Number of training epochs.")
     parser.add_argument("--seed", type=int, default=188229, help="RNG seed.")
+    parser.add_argument("--debug", type=int, default=0, help="Debugging level.")
     parser.add_argument("--reload", dest="main_loop_path", type=str,
                         default=None, help="Reload a pickled main loop.")
     args = parser.parse_args()
@@ -188,15 +193,18 @@ if __name__ == "__main__":
                  mean, covariance_matrix, num_examples, squash=True,
                  rng=numpy.random.RandomState(args.seed))
             print "data cov:"
-            print(numpy.cov(dataset.indexables[0], rowvar=0))
+            data = dataset.indexables[0]
+            print(numpy.cov(data, rowvar=0))
             print dataset.indexables[0]
             nvis = len(mean)
+            if num_examples<=10:
+                print "data x:",data 
         else:
             dataset = MNIST(("train",), sources=('features',))
             num_examples = dataset.num_examples
             batch_size = num_examples
             nvis = 784
-        main_loop = create_main_loop(dataset, nvis, args.nhid,args.nepochs)
+        main_loop = create_main_loop(dataset, nvis, args.nhid,args.nepochs,args.debug)
     main_loop.run()
     model, = main_loop.model.top_bricks
 
