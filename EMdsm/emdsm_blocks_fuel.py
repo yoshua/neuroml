@@ -370,11 +370,3 @@ class FivEM(Initializable, Random):
         #application_call.add_auxiliary_variable(self.params[1], name="b")
         #application_call.add_auxiliary_variable(self.params[2], name="c")
         return self.pp(J_x + J_h,"total_cost")
-
-
-def update_val(n_it, old_value, n_inference_steps):
-    if n_it % n_inference_steps == 0:
-        # return 0 * old_value
-        return old_value+numpy.random.normal(0,0.1,size=old_value.shape)
-    else:
-        return old_value
