@@ -24,7 +24,7 @@ from fuel.transformers import Flatten
 from fuel.datasets import MNIST
 from theano import tensor
 
-from emdsm_blocks_fuel import FivEM, Toy2DGaussianDataset, Repeat, update_val
+from emdsm_blocks_fuel import FivEM, Toy2DGaussianDataset, Repeat
 
     
 def create_main_loop(dataset, nvis, nhid, num_epochs):
@@ -65,6 +65,13 @@ def create_main_loop(dataset, nvis, nhid, num_epochs):
         cost=cost, parameters=computation_graph.parameters, step_rule=step_rule)
     algorithm.add_updates(computation_graph.updates)
 
+    def update_val(n_it, old_value):
+        if n_it % n_inference_steps == 0:
+            # return 0 * old_value
+            return old_value+numpy.random.normal(0,0.1,size=old_value.shape)
+        else:
+            return old_value
+
     extensions = [
         Timing(),
         FinishAfter(after_n_epochs=num_epochs),
@@ -73,14 +80,14 @@ def create_main_loop(dataset, nvis, nhid, num_epochs):
                              after_epoch=False, every_n_epochs=1),
         SharedVariableModifier(
             model_brick.h_prev,
-            functools.partial(update_val, n_inference_steps=n_inference_steps),
+            update_val,
             after_batch=False, before_batch=True),
         SharedVariableModifier(
             model_brick.h,
-            functools.partial(update_val, n_inference_steps=n_inference_steps),
+            update_val,
             after_batch=False, before_batch=True),
         Printing(after_epoch=False, every_n_epochs=1,after_batch=False),
-        Checkpoint(path="./fivem.zip",every_n_epochs=10,after_training=True)
+        # Checkpoint(path="./fivem.zip",every_n_epochs=10,after_training=True)
     ]
     main_loop = MainLoop(model=model, data_stream=train_loop_stream,
                          algorithm=algorithm, extensions=extensions)
