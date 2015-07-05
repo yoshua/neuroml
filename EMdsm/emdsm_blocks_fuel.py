@@ -169,7 +169,8 @@ class FivEM(Initializable, Random):
     """
     @lazy(allocation=['nvis', 'nhid'])
     def __init__(self, nvis, nhid, epsilon, batch_size, noise_scaling=1.0,
-                 lateral_x=False, lateral_h=False, debug=0, **kwargs):
+                 lateral_x=False, lateral_h=False, debug=0, n_inference_steps=3,
+                 initial_noise=0.1, **kwargs):
         super(FivEM, self).__init__(**kwargs)
         self.nvis = nvis
         self.nhid = nhid
@@ -182,6 +183,8 @@ class FivEM(Initializable, Random):
         self.noise_scaling = noise_scaling
         self.children = [self.rho]
         self.debug = debug
+        self.n_inference_steps = n_inference_steps
+        self.initial_noise = initial_noise
 
     def pp(self,var,name,level=1):
         if self.debug >= level:
@@ -206,10 +209,9 @@ class FivEM(Initializable, Random):
         self.parameters.append(Wxx)
         add_role(Wxx, WEIGHT)
         self.h = shared_floatx_nans((self.batch_size, self.nhid), name='h')
-        self.h_prev = shared_floatx_nans((self.batch_size, self.nhid),
-                                         name='h_prev')
-        self.energy_prev = shared_floatx_nans((),name="energy_prev")
-        self.energy_new = shared_floatx_nans((),name="energy_new")
+        x = tensor.matrix()
+        h = tensor.matrix()
+        self.generate_step_f = theano.function(inputs=[x,h],outputs=self.langevin_update(x,h,update_x=True))
 
     def _initialize(self):
         Wxh,b,c,Whh,Wxx = self.parameters
@@ -219,9 +221,6 @@ class FivEM(Initializable, Random):
         self.weights_init.initialize(Whh, self.rng)
         self.weights_init.initialize(Wxx, self.rng)
         self.states_init.initialize(self.h, self.rng)
-        self.states_init.initialize(self.h_prev, self.rng)
-        self.states_init.initialize(self.energy_prev, self.rng)
-        self.states_init.initialize(self.energy_new, self.rng)
 
     @property
     def Wxh(self):
@@ -315,58 +314,64 @@ class FivEM(Initializable, Random):
         return var + 2 * self.epsilon * self.noise_scaling * self.theano_rng.normal(
             size=var.shape, dtype=var.dtype)
 
-    @application(inputs=['x'], outputs=['value'])
-    def cost(self, x, application_call):
+    @application(inputs=['given_x'], outputs=['value'])
+    def cost(self, given_x, application_call):
         """Computes the loss function.
 
         Parameters
         ----------
-        x : tensor variable
-            Batch of visible states.
+        given_x : tensor variable
+                  Batch of given visible states from dataset.
 
         Notes
         -----
         The `application_call` argument is an effect of the `application`
         decorator and isn't visible to users. It's used internally to
-        set an updates dictionary for `h_prev` and `h` that's
+        set an updates dictionary for  `h` that's
         discoverable by `ComputationGraph`.
 
         """
-        h_prev = self.h_prev
-        h = self.h
-        h_next = self.pp(disconnected_grad(self.langevin_update(self.pp(x,"x",3),
-                                                                self.pp(h,"h",2))),
+        x = given_x
+        h_prev = self.h + self.initial_noise * \
+                 self.theano_rng.normal(size=self.h.shape,dtype=self.h.dtype)
+        h = h_next = h_prev
+        old_energy = self.pp(self.energy(x,h).sum(),"old_energy",1)
+        for iteration in range(self.n_inference_steps):
+            h_prev = h
+            h = h_next
+            h_next = self.pp(disconnected_grad(self.langevin_update(self.pp(x,"x",3),
+                                                                    self.pp(h_next,"h",2))),
                         "h_next",2)
-        old_energy = self.pp(self.energy_prev,"old_energy",2)
-        new_energy = self.pp(self.energy(x,h_next).sum(dtype=old_energy.dtype),"new_energy",1)
-        delta_energy = self.pp(old_energy - new_energy,"delta_energy",1)
-        updates = OrderedDict([(h_prev, h), (h, h_next),(self.energy_prev,self.energy_new),(self.energy_new,new_energy)])
-        application_call.updates = dict_union(application_call.updates,
-                                              updates)
-        h_prediction_residual = (h_next - self.pp(h_prev,"h_prev",3) + self.epsilon *
-                                 tensor.grad(self.energy(x, h_prev).sum(), h_prev))
-        J_h = self.pp((h_prediction_residual*h_prediction_residual).sum(axis=1).mean(axis=0),"J_h",1)
-        x_prediction_residual = self.pp(tensor.grad(self.energy(x, h_prev).sum(), x),"x_residual",2)
-        J_x = self.pp((x_prediction_residual*x_prediction_residual).sum(axis=1).mean(axis=0),"J_x",1)
-        ## the values printed using add_auxiliary_variables are not reliable, so use printing.Print instead
-        #application_call.add_auxiliary_variable(self.energy_prev, name="energy_prev")
-        #application_call.add_auxiliary_variable(self.energy_new, name="energy_new")
-        #application_call.add_auxiliary_variable(self.energy_prev - self.energy_new, name="energy_decrease")
+            new_energy = self.pp(self.energy(x,h_next).sum(),"new_energy",1)
+            delta_energy = self.pp(old_energy - new_energy,"delta_energy",1)
+            old_energy = new_energy
+            h_prediction_residual = (h_next - self.pp(h_prev,"h_prev",3) + self.epsilon *
+                                    tensor.grad(self.energy(x, h_prev).sum(), h_prev))
+            J_h = self.pp((h_prediction_residual*h_prediction_residual).sum(axis=1).mean(axis=0),"J_h",1)
+            x_prediction_residual = self.pp(tensor.grad(self.energy(given_x, h_prev).sum(), given_x),
+                                            "x_residual",2)
+            J_x = self.pp((x_prediction_residual*x_prediction_residual).sum(axis=1).mean(axis=0),"J_x",1)
+            if self.debug>1:
+                application_call.add_auxiliary_variable(J_x, name="J_x"+str(iteration))
+                application_call.add_auxiliary_variable(J_h, name="J_h"+str(iteration))
+            if iteration == 0:
+                total_cost = J_h + J_x
+            else:
+                total_cost = total_cost + J_h + J_x
+                
+        per_iteration_cost = total_cost / self.n_inference_steps
+
+        updates = OrderedDict([(self.h, h_next)])
+        application_call.updates = dict_union(application_call.updates, updates)
+
         if self.debug>0:
-           application_call.add_auxiliary_variable(J_x, name="J_x")
-           application_call.add_auxiliary_variable(J_h, name="J_h")
-        #application_call.add_auxiliary_variable(x*1, name="x")
-        #application_call.add_auxiliary_variable(h_prev, name="h_prev")
-        #application_call.add_auxiliary_variable(h, name="h")
-        #application_call.add_auxiliary_variable(h_next, name="h_next")
+           application_call.add_auxiliary_variable(per_iteration_cost, name="per_iteration_cost")
         if self.debug>1:
            application_call.add_auxiliary_variable(self.Wxh*1., name="Wxh")
            application_call.add_auxiliary_variable(self.Whh*1., name="Whh")
            application_call.add_auxiliary_variable(self.Wxx*1., name="Wxx")
            application_call.add_auxiliary_variable(self.b*1, name="b")
            application_call.add_auxiliary_variable(self.c*1, name="c")
-        # YB: the commented lines below make blocks crash, not sure why
-        #application_call.add_auxiliary_variable(self.params[0], name="W")
-        #application_call.add_auxiliary_variable(self.params[1], name="b")
-        #application_call.add_auxiliary_variable(self.params[2], name="c")
-        return self.pp(J_x + J_h,"total_cost")
+
+        return self.pp(total_cost,"total_cost")
+            

@@ -29,13 +29,13 @@ from emdsm_blocks_fuel import FivEM, Toy2DGaussianDataset, Repeat
     
 def create_main_loop(dataset, nvis, nhid, num_epochs, debug_level=0):
     seed = 188229
-    n_inference_steps = 1
+    n_inference_steps = 5
     num_examples = dataset.num_examples
     batch_size = num_examples
 
     train_loop_stream = Flatten(DataStream.default_stream(
         dataset=dataset,
-        iteration_scheme= # Repeat(
+        iteration_scheme= #Repeat(
           SequentialScheme(dataset.num_examples, batch_size)
          #, n_inference_steps)
 #            ShuffledScheme(dataset.num_examples, batch_size), n_inference_steps))
@@ -51,7 +51,8 @@ def create_main_loop(dataset, nvis, nhid, num_epochs, debug_level=0):
     model_brick = FivEM(
         nvis=nvis, nhid=nhid, epsilon=.001, batch_size=batch_size,
         weights_init=IsotropicGaussian(0.1), biases_init=Constant(0),
-        noise_scaling=1, debug=debug_level, lateral_x=False, lateral_h=False)
+        noise_scaling=1, debug=debug_level, lateral_x=False, lateral_h=False,
+        n_inference_steps=n_inference_steps)
     model_brick.initialize()
 
     x = tensor.matrix('features')
@@ -69,35 +70,12 @@ def create_main_loop(dataset, nvis, nhid, num_epochs, debug_level=0):
         cost=cost, parameters=computation_graph.parameters, step_rule=step_rule)
     algorithm.add_updates(computation_graph.updates)
 
-    def update_val(n_it, old_value):
-        if n_it % n_inference_steps == 0:
-            # return 0 * old_value
-            return old_value+numpy.random.normal(0,0.1,size=old_value.shape)
-        else:
-            return old_value
-
     extensions = [
         Timing(),
         FinishAfter(after_n_epochs=num_epochs),
         DataStreamMonitoring([cost]+computation_graph.auxiliary_variables,
                              monitoring_stream, after_batch=False,
                              after_epoch=False, every_n_epochs=1),
-        #SharedVariableModifier(
-        #    model_brick.h_prev,
-        #    functools.partial(update_val, n_inference_steps=n_inference_steps),
-        #    after_batch=False, before_batch=True),
-        #SharedVariableModifier(
-        #    model_brick.h,
-        #    functools.partial(update_val, n_inference_steps=n_inference_steps),
-        #    after_batch=False, before_batch=True),
-        SharedVariableModifier(
-            model_brick.h_prev,
-            update_val,
-            after_batch=False, before_batch=True),
-        SharedVariableModifier(
-            model_brick.h,
-            update_val,
-            after_batch=False, before_batch=True),
         Printing(after_epoch=False, every_n_epochs=1,after_batch=False),
         # Checkpoint(path="./fivem.zip",every_n_epochs=10,after_training=True)
     ]
@@ -139,7 +117,6 @@ def plot_energy_surface(model):
     
     for i in range(100):
         map_f()
-        #print "total E=",inferencer.energyfn.E_fn(x,h)
     (E_,) = energy_f()
     E_ = E_.reshape(x1.shape)
     fig = plt.figure()
@@ -224,8 +201,8 @@ if __name__ == "__main__":
     model, = main_loop.model.top_bricks
 
     if which_dataset == 'toy':
-        print "show energy function"
-        plot_energy_surface(model)
+       print "show energy function" 
+       plot_energy_surface(model)
     
     print "generate samples"
     n_generated = 1000
