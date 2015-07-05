@@ -17,7 +17,7 @@ from blocks.initialization import IsotropicGaussian, Constant
 from blocks.main_loop import MainLoop
 from blocks.model import Model
 from blocks.utils import shared_floatx, shared_floatx_zeros
-from blocks.extensions.monitoring import DataStreamMonitoring
+from blocks.extensions.monitoring import TrainingDataMonitoring
 from fuel.streams import DataStream
 from fuel.schemes import ShuffledScheme,ConstantScheme,SequentialScheme
 from fuel.transformers import Flatten
@@ -39,13 +39,6 @@ def create_main_loop(dataset, nvis, nhid, num_epochs, debug_level=0):
           SequentialScheme(dataset.num_examples, batch_size)
          #, n_inference_steps)
 #            ShuffledScheme(dataset.num_examples, batch_size), n_inference_steps))
-            ), which_sources=('features',))
-    monitoring_stream = Flatten(DataStream.default_stream(
-        dataset=dataset,
-        iteration_scheme= # Repeat(
-            SequentialScheme(dataset.num_examples, batch_size)
-            #,n_inference_steps)
-            #ShuffledScheme(dataset.num_examples, batch_size), n_inference_steps))
             ), which_sources=('features',))
 
     model_brick = FivEM(
@@ -73,9 +66,9 @@ def create_main_loop(dataset, nvis, nhid, num_epochs, debug_level=0):
     extensions = [
         Timing(),
         FinishAfter(after_n_epochs=num_epochs),
-        DataStreamMonitoring([cost]+computation_graph.auxiliary_variables,
-                             monitoring_stream, after_batch=False,
-                             after_epoch=False, every_n_epochs=1),
+        TrainingDataMonitoring([cost]+computation_graph.auxiliary_variables,
+                               after_batch=False, after_epoch=False,
+                               every_n_epochs=1),
         Printing(after_epoch=False, every_n_epochs=1,after_batch=False),
         # Checkpoint(path="./fivem.zip",every_n_epochs=10,after_training=True)
     ]
