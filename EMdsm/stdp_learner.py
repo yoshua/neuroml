@@ -194,19 +194,19 @@ class FivEM(Initializable, Random):
         
     def _allocate(self):
         Wxh = shared_floatx_nans((self.nvis, self.nhid), name='Wxh')
-        self.parameters.append(Wxh)
+        self.params.append(Wxh)
         add_role(Wxh, WEIGHT)
         b = shared_floatx_nans((self.nhid), name='b')
-        self.parameters.append(b)
+        self.params.append(b)
         add_role(b, BIAS)
         c = shared_floatx_nans((self.nvis), name='c')
-        self.parameters.append(c)
+        self.params.append(c)
         add_role(c, BIAS)
         Whh = shared_floatx_nans((self.nhid, self.nhid), name='Whh')
-        self.parameters.append(Whh)
+        self.params.append(Whh)
         add_role(Whh, WEIGHT)
         Wxx = shared_floatx_nans((self.nvis, self.nvis), name='Wxx')
-        self.parameters.append(Wxx)
+        self.params.append(Wxx)
         add_role(Wxx, WEIGHT)
         self.h = shared_floatx_nans((self.batch_size, self.nhid), name='h')
         x = tensor.matrix()
@@ -214,7 +214,7 @@ class FivEM(Initializable, Random):
         self.generate_step_f = theano.function(inputs=[x,h],outputs=self.langevin_update(x,h,update_x=True))
 
     def _initialize(self):
-        Wxh,b,c,Whh,Wxx = self.parameters
+        Wxh,b,c,Whh,Wxx = self.params
         self.weights_init.initialize(Wxh, self.rng)
         self.biases_init.initialize(b, self.rng)
         self.biases_init.initialize(c, self.rng)
@@ -224,23 +224,23 @@ class FivEM(Initializable, Random):
 
     @property
     def Wxh(self):
-        return self.parameters[0]
+        return self.params[0]
     
     @property
     def b(self):
-        return self.parameters[1]
+        return self.params[1]
 
     @property
     def c(self):
-        return self.parameters[2]
+        return self.params[2]
 
     @property
     def Whh(self):
-        return self.parameters[3]
+        return self.params[3]
     
     @property
     def Wxx(self):
-        return self.parameters[4]
+        return self.params[4]
     
     def energy(self, x, h):
         """Computes the energy function.
@@ -290,7 +290,7 @@ class FivEM(Initializable, Random):
             return (self.corrupt(h) - self.epsilon *
                     tensor.grad(self.energy(x, h).sum(), h))
 
-    def map_update(self, x, h):
+    def map_update(self, x, h, update_x=False):
         """Computes h update going down the energy gradient, given x.
 
         Parameters
@@ -300,7 +300,11 @@ class FivEM(Initializable, Random):
         h : tensor variable
             Batch of hidden states.
         """
-        return (h - self.epsilon * tensor.grad(self.energy(x, h).sum(), h))
+        if update_x:
+            return ((x - self.epsilon * tensor.grad(self.energy(x, h).sum(), x)),
+                    (h - self.epsilon * tensor.grad(self.energy(x, h).sum(), h)))
+        else:
+            return (h - self.epsilon * tensor.grad(self.energy(x, h).sum(), h))
 
     def corrupt(self, var):
         """Adds zero-mean gaussian noise to the input variable.
@@ -331,14 +335,27 @@ class FivEM(Initializable, Random):
         discoverable by `ComputationGraph`.
 
         """
-        x = given_x
+        x = self.pp(given_x,"given_x",2)
         h_prev = self.h + self.initial_noise * \
                  self.theano_rng.normal(size=self.h.shape,dtype=self.h.dtype)
         h = h_next = h_prev
         old_energy = self.pp(self.energy(x,h).sum(),"old_energy",1)
+
+        # try to go towards a fixed point, near the given_x
         for iteration in range(self.n_inference_steps):
             h_prev = h
             h = h_next
+            new_x, new_h = self.map_update(self.pp(x,"x",3), self.pp(h_next,"h",2), update_x=True)
+            x, h_next = self.pp(disconnected_grad(new_x),"new mapped x",2), disconnected_grad(new_h)
+            new_energy = self.pp(self.energy(x,h_next).sum(),"map_new_energy",1)
+            delta_energy = self.pp(old_energy - new_energy,"map_delta_energy",1)
+            old_energy = new_energy
+
+        # now move back towards given_x and let h settle accordingly
+        for iteration in range(self.n_inference_steps):
+            h_prev = h
+            h = h_next
+            x = (1-self.epsilon)*x + self.epsilon*given_x
             h_next = self.pp(disconnected_grad(self.langevin_update(self.pp(x,"x",3),
                                                                     self.pp(h_next,"h",2))),
                         "h_next",2)

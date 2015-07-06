@@ -24,7 +24,7 @@ from fuel.transformers import Flatten
 from fuel.datasets import MNIST
 from theano import tensor
 
-from emdsm_blocks_fuel import FivEM, Toy2DGaussianDataset, Repeat
+from stdp_learner import FivEM, Toy2DGaussianDataset
 
     
 def create_main_loop(dataset, nvis, nhid, num_epochs, debug_level=0):
@@ -60,7 +60,7 @@ def create_main_loop(dataset, nvis, nhid, num_epochs, debug_level=0):
     #step_rule = RMSProp(learning_rate=0.01)
     #step_rule = AdaGrad(learning_rate=1e-4)
     algorithm = GradientDescent(
-        cost=cost, parameters=computation_graph.parameters, step_rule=step_rule)
+        cost=cost, params=computation_graph.parameters, step_rule=step_rule)
     algorithm.add_updates(computation_graph.updates)
 
     extensions = [
