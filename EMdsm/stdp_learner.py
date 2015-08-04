@@ -340,19 +340,21 @@ class FivEM(Initializable, Random):
                  self.theano_rng.normal(size=self.h.shape,dtype=self.h.dtype)
         h = h_next = h_prev
         old_energy = self.pp(self.energy(x,h).sum(),"old_energy",1)
-
+        force_computation=0
         # try to go towards a fixed point, near the given_x
         for iteration in range(self.n_inference_steps):
             h_prev = h
             h = h_next
             new_x, new_h = self.map_update(self.pp(x,"x",3), self.pp(h_next,"h",2), update_x=True)
-            x, h_next = self.pp(disconnected_grad(new_x),"new mapped x",2), disconnected_grad(new_h)
+            x, h_next = self.pp(disconnected_grad(new_x),"new mapped x",2), \
+                        self.pp(disconnected_grad(new_h),"new mapped h",2)
             new_energy = self.pp(self.energy(x,h_next).sum(),"map_new_energy",1)
             delta_energy = self.pp(old_energy - new_energy,"map_delta_energy",1)
             old_energy = new_energy
-
+            force_computation = force_computation + delta_energy
+            
         # now move back towards given_x and let h settle accordingly
-        for iteration in range(self.n_inference_steps):
+        for iteration in range(self.n_inference_steps/2):
             h_prev = h
             h = h_next
             x = (1-self.epsilon)*x + self.epsilon*given_x
@@ -362,6 +364,7 @@ class FivEM(Initializable, Random):
             new_energy = self.pp(self.energy(x,h_next).sum(),"new_energy",1)
             delta_energy = self.pp(old_energy - new_energy,"delta_energy",1)
             old_energy = new_energy
+            force_computation = force_computation + delta_energy
             h_prediction_residual = (h_next - self.pp(h_prev,"h_prev",3) + self.epsilon *
                                     tensor.grad(self.energy(x, h_prev).sum(), h_prev))
             J_h = self.pp((h_prediction_residual*h_prediction_residual).sum(axis=1).mean(axis=0),"J_h",1)
@@ -390,5 +393,5 @@ class FivEM(Initializable, Random):
            application_call.add_auxiliary_variable(self.b*1, name="b")
            application_call.add_auxiliary_variable(self.c*1, name="c")
 
-        return self.pp(total_cost,"total_cost")
+        return self.pp(total_cost+1e-20*force_computation,"total_cost")
             

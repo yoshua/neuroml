@@ -27,9 +27,9 @@ from theano import tensor
 from stdp_learner import FivEM, Toy2DGaussianDataset
 
     
-def create_main_loop(dataset, nvis, nhid, num_epochs, debug_level=0):
+def create_main_loop(dataset, nvis, nhid, num_epochs, debug_level=0, lrate=1e-3):
     seed = 188229
-    n_inference_steps = 5
+    n_inference_steps = 6
     num_examples = dataset.num_examples
     batch_size = num_examples
 
@@ -42,7 +42,7 @@ def create_main_loop(dataset, nvis, nhid, num_epochs, debug_level=0):
             ), which_sources=('features',))
 
     model_brick = FivEM(
-        nvis=nvis, nhid=nhid, epsilon=.001, batch_size=batch_size,
+        nvis=nvis, nhid=nhid, epsilon=.01, batch_size=batch_size,
         weights_init=IsotropicGaussian(0.1), biases_init=Constant(0),
         noise_scaling=1, debug=debug_level, lateral_x=False, lateral_h=False,
         n_inference_steps=n_inference_steps)
@@ -55,7 +55,7 @@ def create_main_loop(dataset, nvis, nhid, num_epochs, debug_level=0):
     model = Model(cost)
     #step_rule = Adam(learning_rate=2e-5, beta1=0.1, beta2=0.001, epsilon=1e-8,
     #                 decay_factor=(1 - 1e-8))
-    step_rule = Momentum(learning_rate=1e-2,momentum=0.95)
+    step_rule = Momentum(learning_rate=lrate,momentum=0.95)
     #step_rule = AdaDelta()
     #step_rule = RMSProp(learning_rate=0.01)
     #step_rule = AdaGrad(learning_rate=1e-4)
@@ -67,9 +67,9 @@ def create_main_loop(dataset, nvis, nhid, num_epochs, debug_level=0):
         Timing(),
         FinishAfter(after_n_epochs=num_epochs),
         TrainingDataMonitoring([cost]+computation_graph.auxiliary_variables,
-                               after_batch=False, after_epoch=False,
-                               every_n_epochs=1),
-        Printing(after_epoch=False, every_n_epochs=1,after_batch=False),
+                               after_batch=False, after_epoch=True),
+        #                       every_n_epochs=1),
+        Printing(after_epoch=True, after_batch=False), # every_n_epochs=1,
         # Checkpoint(path="./fivem.zip",every_n_epochs=10,after_training=True)
     ]
     main_loop = MainLoop(model=model, data_stream=train_loop_stream,
@@ -156,6 +156,7 @@ if __name__ == "__main__":
                         help="Number of hidden units.")
     parser.add_argument("--nepochs", type=int, default=100,
                         help="Number of training epochs.")
+    parser.add_argument("--lrate", type=float, default=1e-3, help="Learning rate.")
     parser.add_argument("--seed", type=int, default=188229, help="RNG seed.")
     parser.add_argument("--debug", type=int, default=0, help="Debugging level.")
     parser.add_argument("--reload", dest="main_loop_path", type=str,

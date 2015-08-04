@@ -144,8 +144,8 @@ class Toy2DGaussianDataset(IndexableDataset):
 class Rho(Activation):
     @application(inputs=['input_'], outputs=['output'])
     def apply(self, input_):
-        return (tensor.switch(input_ + 0.5 > 0, input_, 0) -
-                tensor.switch(input_ - 0.5 > 0, input_, 0))
+        return (tensor.switch(input_ + 0.5 > 0, input_+0.5, 0) -
+                tensor.switch(input_ - 0.5 > 0, input_-0.5, 0))
 
 
 class FivEM(Initializable, Random):
