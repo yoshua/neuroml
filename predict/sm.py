@@ -39,7 +39,9 @@ def rho_second(a):
      return -2*t*(1-t*t)
 
 def squared_norm(x): return T.sum(x*x)
-    
+
+#def elementwise_squared_norm(x): return x.sqrt.sum(axis=1)
+
 class LatentPredictor1:
     def __init__(self, n1=1, n2=1, nh=1, n_inference_steps=10, epsilon=0.05, lrate=0.01, batchsize=1, debug_level=1, wd=.1e-3):
         self.epsilon=epsilon
@@ -69,10 +71,21 @@ class LatentPredictor1:
         # E = .5 ||s||^2 - .5 sum_{i,j} W_ij rho(s_i) rho(s_j) - sum_i b_i rho(s_i)
         # with W_ij = W_ji and non-zero W only for interaction between h and x1 (W1) and between h and x2 (W2), and W_ii=0
         E = 0.5*(squared_norm(self.h)+squared_norm(self.x1)+squared_norm(self.x2)) \
-          - T.sum(rho(self.h)*h_prediction) - T.sum(T.dot(rho(self.x1),self.bx1) \
-                                                   + T.dot(rho(self.x2),self.bx2))
-                                                   
+            - T.sum(rho(self.h)*h_prediction) - T.sum(T.dot(rho(self.x1),self.bx1) \
+                                                      + T.dot(rho(self.x2),self.bx2))
+    
         mean_E = E / self.batchsize
+    
+        #gives a batch of energys for a bacth of states
+        squared_h = self.h**2
+        squared_x1 = self.x1**2
+        squared_x2 = self.h**2
+        
+        #Calculates the energy of a batch elementwise
+        E_elementwise = 0.5*( squared_h.sum(axis=1) + squared_x1.sum(axis=1)+ squared_x2.sum(axis=1) ) \
+            - T.dot(rho(self.h),self.bh)  - self.h.T*T.dot(rho(self.x1),self.W1.T).T- self.h.T*T.dot(rho(self.x2),self.W2.T).T\
+                - (T.dot(rho(self.x1),self.bx1) + T.dot(rho(self.x2),self.bx2))
+    
         
         dEdh = T.grad(E,self.h)
         dEdx1 = T.grad(E,self.x1)
@@ -170,8 +183,10 @@ class LatentPredictor1:
                                                                    (self.h,self.new_h)
                                                                    ]))
 
-        self.energy_f = theano.function([],[E])
-        
+        self.energy_f = theano.function([],[E_elementwise])
+            #  self.energy_f = theano.function([],[E])
+
+
     def update_h_params(self,x1,x2):
         self.x1.set_value(x1)
         self.x2.set_value(x2)
@@ -233,16 +248,18 @@ class LatentPredictor1:
         for it in range(self.n_inference_steps):
             self.update_state_f()
             
-    def energy(self,x1,x2,h=NULL):
+    def energy(self,x1,x2,h=None):
         self.x1.set_value(x1)
         self.x2.set_value(x2)
-        if h=NULL:
-            self.prev_h.set_value(self.h.get_value()*0.)
+        if h==None:
+            datapoint_number=x1.shape[0]
+            help=np.zeros((datapoint_number,self.nh))
+            self.prev_h.set_value(help)  #self.prev_h.set_value(self.h.get_value()*0.)
             self.h.set_value(self.prev_h.get_value())
             for it in range(self.n_inference_steps):
-                self.update_state_f()
+                self.update_h_f() # self.update_state_f()
         else:
-            self.h.set_value(h)
+            self.h=sharedX(x1)
         return self.energy_f()
 
 def data1():
@@ -257,23 +274,36 @@ def data2():
     data = np.hstack((x1,x2))
     return data
 
-def plot_energy_surface(model):
+def plot_energy_surface(model, start, stop, step):
     from mpl_toolkits.mplot3d import Axes3D
     from matplotlib import cm
     from matplotlib.ticker import LinearLocator, FormatStrFormatter
     import matplotlib.pyplot as plt
 
+    (x1,x2) = np.meshgrid(np.arange(start,stop,step),np.arange(start,stop,step))
+    
+    print x1.shape
+    print x2.shape
 
-    (x1,x2) = numpy.meshgrid(numpy.arange(-1.25,1.25,.05),numpy.arange(-1.25,1.25,.05))
-    E = model.energy(x1,x2)
+    # formating the batch of datapoints
+    datapoint_number= x1.shape[1]
+    x1help=x1.reshape(datapoint_number**2,1)
+    x2help=x2.reshape(datapoint_number**2,1)
     
 
-    E_ = E_.reshape(x1.shape)
+    print x1help.shape
+    print x2help.shape
+    
+    E = model.energy(x1help,x2help)
+    
+    print E[0].shape
+
+    E_ = E[0].reshape((datapoint_number,datapoint_number)) #  E_.reshape(x1.shape)
     fig = plt.figure()
     ax = fig.gca(projection='3d')
     surf = ax.plot_surface(x1, x2, E_, rstride=1, cstride=1, cmap=cm.coolwarm,
             linewidth=0, antialiased=False)
-    ax.set_zlim(numpy.min(E_), numpy.max(E_))
+    ax.set_zlim(np.min(E_), np.max(E_))
     ax.zaxis.set_major_locator(LinearLocator(10))
     ax.zaxis.set_major_formatter(FormatStrFormatter('%.02f'))
     fig.colorbar(surf, shrink=0.5, aspect=5)
@@ -311,7 +341,7 @@ def exp():
         print "EPOCH E,J = ",epoch_E/n_batches,epoch_J/n_batches
 
 
-    plot_energy_surface(model)
+    plot_energy_surface(model, -1, 2, 0.05)
     
 if __name__ == "__main__":
     debug_printing = True
